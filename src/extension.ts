@@ -160,7 +160,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     WallpaperPanel.instance?.setLiveSurface(!workbenchRendersLive(item, patched));
   };
 
-  const showSelected = async (item = service.find(selectedId) ?? service.playableItems()[0]) => {
+  const showSelected = async (
+    item = service.find(selectedId) ?? service.playableItems()[0],
+    prompt = true,
+  ) => {
     if (!item) return;
     selectedId = item.id;
     await context.globalState.update(SELECTED_KEY, item.id);
@@ -173,8 +176,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // Mirror the selection into the settings page so it is visible/editable there.
     const cfg = vscode.workspace.getConfiguration('weWallpaper');
     if (cfg.get<string>('wallpaperId', '') !== item.id) await setSetting('wallpaperId', item.id, true);
-    // Keep the workbench background in step with the selection.
-    if (patched) void refreshWorkbenchPatch(true);
+    // Keep the workbench background in step with the selection. `prompt` is false when
+    // this is not the user picking a wallpaper (a live-surface toggle re-applies the
+    // same one) — the "已切换到「X」" notice would be pure noise then.
+    if (patched) void refreshWorkbenchPatch(prompt);
   };
 
   async function openPanel(): Promise<void> {
@@ -657,7 +662,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       ) {
         void ensureInventory().then(() => {
           const item = service.find(selectedId) ?? service.playableItems()[0];
-          if (item) return showSelected(item);
+          if (item) return showSelected(item, false);
           return undefined;
         });
       }

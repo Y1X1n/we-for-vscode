@@ -221,8 +221,13 @@ test('only one surface renders a Scene/Web wallpaper live (the panel obeys the h
   assert.match(mainSrc, /isLive\(state\.item\) && panelLive/, '关掉面板实时后不得再挂载');
   // A mount already in flight when the policy flips must be parked: the engine exposes
   // no destroy(), so without this the panel keeps rendering a detached 0x0 canvas —
-  // invisible, and worse than the duplicate it replaced (reproduced live).
-  assert.match(mainSrc, /if \(attachedLive !== key\) \{[\s\S]*?instance\.pause\(\)/, '竞态中的挂载必须被取消并释放');
+  // invisible, and worse than the duplicate it replaced (reproduced live). The guard is
+  // a generation, not the key: re-attaching the SAME wallpaper while its first mount is
+  // still in flight would otherwise let the stale mount adopt itself as the live one.
+  assert.match(mainSrc, /let liveGen = 0;/, '取消要用世代号判定');
+  assert.match(mainSrc, /if \(gen !== liveGen\) \{[\s\S]*?parkLiveInstance\(instance\)/, '迟到的挂载必须释放');
+  assert.match(mainSrc, /function detachLive\(\) \{\s*\/\/[^\n]*\n\s*liveGen \+= 1;/, 'detach 必须让在飞行的挂载失效');
+  assert.match(mainSrc, /let mountChain = Promise\.resolve\(\);/, '挂载必须串行，否则释放会把新画布一起删掉');
   assert.match(mainSrc, /实时挂载已被取消/, '取消要留一条日志，否则下次只能靠猜');
   assert.match(mainSrc, /case 'live':/, 'webview 必须处理 live 消息');
   assert.match(mainSrc, /整窗层实时渲染/, '面板不是实时面时必须如实标注徽章（不能继续写"实时渲染"）');

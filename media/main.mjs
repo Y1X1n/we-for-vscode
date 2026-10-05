@@ -148,6 +148,34 @@ function detachVideo() {
 let liveInstance = null;
 /** What is mounted, so re-picking the same wallpaper does not remount it. */
 let attachedLive = null;
+/**
+ * Bumped by every detach: a mount that finishes under an older generation parks itself
+ * instead of claiming the container. Comparing keys is not enough — re-attaching the
+ * SAME wallpaper while its first mount is still in flight would let the stale mount
+ * adopt itself as the live instance.
+ */
+let liveGen = 0;
+/**
+ * Mounts are serialised. Parking a cancelled instance clears the container, and doing
+ * that while another mount is mid-flight would delete the canvas the new mount just
+ * appended — with mount() resolving asynchronously there is no ordering otherwise.
+ */
+let mountChain = Promise.resolve();
+
+/** Pause a mount nobody wants any more and drop what it put in the container. */
+function parkLiveInstance(instance) {
+  try {
+    instance.pause();
+  } catch {
+    /* already gone */
+  }
+  try {
+    el.live.replaceChildren();
+    el.live.hidden = true;
+  } catch {
+    /* ignore */
+  }
+}
 
 /**
  * Mount or swap the live wallpaper.
@@ -162,34 +190,32 @@ async function attachLive(item) {
   if (attachedLive === key) return;
   detachLive();
   attachedLive = key;
+  const gen = liveGen;
   el.live.hidden = false;
   log('info', `实时挂载开始：${item.renderMode} ${item.media ?? '(无载荷)'}`);
-  try {
-    const instance = await mountWallpaper(el.live, item, {
+  const attempt = mountChain.then(() =>
+    mountWallpaper(el.live, item, {
       fps: 30,
       // The engine's own reporting (silent-failure one-shots, WebGL context loss,
       // watchdog). Without this, a dead render loop is indistinguishable from
       // "still loading" — the exact shape of the invisible-scene bug report.
       onDiagnostic: (msg, level) => log(level === 'error' ? 'error' : level === 'warn' ? 'warn' : 'info', `[引擎] ${msg}`),
       onError: (err) => log('error', `[引擎] ${err && err.message ? err.message : String(err)}`),
-    });
+    }),
+  );
+  mountChain = attempt.then(
+    () => undefined,
+    () => undefined,
+  );
+  try {
+    const instance = await attempt;
     // The mount may have been cancelled WHILE it was in flight — the host switched the
     // live surface to the whole-window layer, or the item changed. mount() has no
     // destroy(), so a late instance has to be parked right here: pause the loop and
     // drop the canvas. Skipping this leaves the panel rendering a detached, 0x0 canvas
     // at full frame rate — invisible, and worse than the duplicate it replaced.
-    if (attachedLive !== key) {
-      try {
-        instance.pause();
-      } catch {
-        /* already gone */
-      }
-      try {
-        el.live.replaceChildren();
-        el.live.hidden = true;
-      } catch {
-        /* ignore */
-      }
+    if (gen !== liveGen) {
+      parkLiveInstance(instance);
       log('info', '实时挂载已被取消（实时面已切换），实例已释放');
       return;
     }
@@ -207,6 +233,7 @@ async function attachLive(item) {
     // a web wallpaper's `canvas` is the container div, there is nothing to grab).
     window.setTimeout(captureLiveFrame, 2500);
   } catch (err) {
+    if (gen !== liveGen) return; // a cancelled mount must not report or clear anything
     attachedLive = null;
     el.live.hidden = true;
     const message = String(err && err.message ? err.message : err);
@@ -235,6 +262,8 @@ function captureLiveFrame() {
 }
 
 function detachLive() {
+  // Invalidate any in-flight mount FIRST: it will park itself when it resolves.
+  liveGen += 1;
   if (!attachedLive) return;
   attachedLive = null;
   state.sceneReady = false;
