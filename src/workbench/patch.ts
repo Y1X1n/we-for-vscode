@@ -408,11 +408,11 @@ ${scope} .monaco-workbench.hc-light {
 \tpointer-events: none;
 \toverflow: hidden;
 \tbackground: transparent;
-\t/* Readability blur, set only when the wallpaper is busy enough to need it (see
-\t   wbContrast below). The slight overscale hides the soft edge a filter would
-\t   otherwise leave at the window border. */
-\tfilter: blur(var(--we-wb-blur, 0px));
-\ttransform: scale(var(--we-wb-scale, 1));
+\t/* No filter here on purpose. A blurred wallpaper layer softens the code area too —
+\t   the editor surface is translucent, so whatever it sits on shows through it. The
+\t   blur belongs to the GLASS surfaces (chrome, panel), which is where the frosted
+\t   look comes from; the code area stays crisp and gets its readability from the
+\t   scrim plus its own surface alpha (see the glass rules below). */
 }
 
 html.we-wb-fallback #we-workbench-wallpaper {
@@ -627,15 +627,16 @@ ${scope} .monaco-workbench .part.panel {
 \t-webkit-backdrop-filter: blur(var(--we-wb-glass-blur, 0px)) saturate(1.25);
 }
 
-/* The code surface. Glyphs need a stable backdrop, not the wallpaper's own pixels
-   showing between them — this is the "code text contrast" half of the glass look,
-   and it is deliberately MORE opaque than the chrome above. The blur kills the
-   wallpaper's high-frequency detail behind the text, which is what actually makes a
-   busy photograph unreadable even when it is not bright. */
+/* The code surface: translucent, but NEVER blurred.
+ *
+ * Glyphs need a stable backdrop, not the wallpaper's pixels between them, and the
+ * answer here is opacity alone — the auto-contrast solver raises this value until the
+ * text reaches WCAG 4.5:1 (see wbEditorAlpha). A backdrop blur would also do it, but
+ * it smears the area the user reads: the wallpaper behind the editor is supposed to
+ * look like a picture, not like frosted glass. The blur lives on the chrome rule
+ * above, where the frosted look is the point. */
 ${scope} .monaco-workbench .part.editor > .content {
 \tbackground-color: rgba(var(--we-wb-editor-rgb), var(--we-wb-editor-alpha, 0)) !important;
-\tbackdrop-filter: blur(var(--we-wb-glass-blur, 0px)) saturate(1.15);
-\t-webkit-backdrop-filter: blur(var(--we-wb-glass-blur, 0px)) saturate(1.15);
 }
 
 /* Editors keep a faint wash so long sessions stay readable over a busy
@@ -1487,8 +1488,8 @@ export function buildJs(origin: string): string {
       }
       document.documentElement.style.setProperty('--we-wb-scrim', String(effective));
       document.documentElement.style.setProperty('--we-wb-scrim-rgb', fill);
-      document.documentElement.style.setProperty('--we-wb-blur', floor.blur + 'px');
-      document.documentElement.style.setProperty('--we-wb-scale', floor.blur ? '1.04' : '1');
+      // The wallpaper layer itself is never filtered: the code area has to stay crisp,
+      // and a busy wallpaper is handled by the scrim plus the editor's own opacity.
       if (changed) void document.body.offsetHeight;
     } catch (e) { /* cosmetic only */ }
   }

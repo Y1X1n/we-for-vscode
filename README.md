@@ -59,7 +59,7 @@
 # 先完全关闭 VS Code（整窗背景层是文件级补丁，运行中安装会留给 webview 一个
 # "Could not register service worker" 报错）
 & "$env:LOCALAPPDATA\Programs\Microsoft VS Code\bin\code.cmd" `
-  --install-extension .\we-for-vscode-0.1.2.vsix --force
+  --install-extension .\we-for-vscode-0.1.3.vsix --force
 ```
 
 装好后启动 VS Code：扩展会自动激活，壁纸视图用 `Ctrl+Alt+W` 打开。
@@ -71,7 +71,7 @@ git clone https://github.com/Y1X1n/we-for-vscode.git
 cd we-for-vscode
 npm install
 npm run verify                        # tsc + node --test
-npx vsce package --no-dependencies    # 产出 we-for-vscode-0.1.2.vsix
+npx vsce package --no-dependencies    # 产出 we-for-vscode-0.1.3.vsix
 ```
 
 ### 打开“铺满整个窗口”

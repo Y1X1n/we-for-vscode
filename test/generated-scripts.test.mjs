@@ -65,8 +65,6 @@ test('the generated CSS is balanced and carries the surfaces the JS drives', () 
     '--we-wb-opacity',
     '--we-wb-scrim',
     '--we-wb-scrim-rgb',
-    '--we-wb-blur',
-    '--we-wb-scale',
     '--we-wb-glass-rgb',
     '--we-wb-glass-alpha',
     '--we-wb-editor-rgb',
@@ -75,6 +73,12 @@ test('the generated CSS is balanced and carries the surfaces the JS drives', () 
   ]) {
     assert.ok(css.includes(v), `CSS 必须消费 ${v}`);
   }
+  // The wallpaper layer is deliberately unfiltered, and the code surface deliberately
+  // has no backdrop blur: a blurred backdrop behind the editor smears what the user
+  // reads. Frosting belongs to the chrome (and the panel), which is what the next test
+  // pins.
+  assert.ok(!css.includes('--we-wb-blur'), '壁纸层不得再有可读性模糊变量');
+  assert.ok(!css.includes('--we-wb-scale'), '壁纸层不得再有模糊补偿缩放');
 });
 
 test('the runtime writes exactly the variables the CSS declares', () => {
@@ -88,6 +92,29 @@ test('the runtime writes exactly the variables the CSS declares', () => {
   }
   assert.ok(written.has('--we-wb-editor-alpha'), '代码区不透明度必须由运行时驱动（自动求解会抬高它）');
   assert.ok(written.has('--we-wb-glass-alpha'), '侧栏磨砂不透明度必须由运行时驱动');
+  assert.ok(!written.has('--we-wb-blur'), '运行时不得再给壁纸层写模糊');
+});
+
+test('frosting stays on the chrome: the code area is never blurred', () => {
+  const css = buildCss(ORIGIN);
+  const ruleFor = (selector) => {
+    const at = css.indexOf(selector);
+    assert.ok(at >= 0, `找不到规则 ${selector}`);
+    const open = css.indexOf('{', at);
+    return css.slice(open, css.indexOf('}', open));
+  };
+  // Sidebar / activity bar / title bar / status bar / panel: frosted.
+  const chrome = ruleFor('.monaco-workbench .part.sidebar,');
+  assert.match(chrome, /backdrop-filter:\s*blur\(/, '侧栏必须保留高斯模糊（磨砂玻璃）');
+  assert.match(chrome, /background-color:\s*rgba\(var\(--we-wb-glass-rgb\)/, '侧栏要有主题色调的半透明底');
+  // The code surface: translucent, no filter of any kind.
+  const editor = ruleFor('.monaco-workbench .part.editor > .content {');
+  assert.match(editor, /background-color:\s*rgba\(var\(--we-wb-editor-rgb\)/, '代码区要有底衬');
+  assert.ok(!/backdrop-filter/.test(editor), '代码区不得有 backdrop-filter（用户明确要求不模糊）');
+  assert.ok(!/filter:/.test(editor), '代码区不得有任何 filter');
+  // And the wallpaper layer behind both of them stays sharp.
+  const layer = ruleFor('#we-workbench-wallpaper {');
+  assert.ok(!/filter:/.test(layer), '壁纸层不得被模糊，否则代码区跟着糊');
 });
 
 test('the readability readout follows the settings, not just the pixels', () => {

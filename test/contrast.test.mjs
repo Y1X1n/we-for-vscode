@@ -220,7 +220,10 @@ test('every surface that renders the wallpaper applies the floor', () => {
   assert.match(js, /function wbTextContrast/, '对比度要用主题色与实测亮度算，而不是猜');
   assert.match(js, /--vscode-editor-foreground/, '前景色必须取自主题变量');
   const css = read('src/workbench/patch.ts');
-  assert.match(css, /--we-wb-blur/, '整窗层要有可读性模糊变量');
+  // No blur on the wallpaper layer: the code area sits on it, and a blurred backdrop
+  // behind glyphs is exactly what the user asked to remove. Contrast is carried by the
+  // scrim plus the editor's own (solved) opacity.
+  assert.ok(!css.includes('--we-wb-blur'), '壁纸层不得有可读性模糊（代码区必须清晰）');
   assert.match(css, /--we-wb-scrim-rgb/, '暗化层颜色要按主题方向可换（浅色主题要提亮）');
 
   const main = read('media/main.mjs');
