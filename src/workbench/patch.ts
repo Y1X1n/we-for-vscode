@@ -949,13 +949,9 @@ export function buildJs(origin: string): string {
         var stats = wbStats(ctx.getImageData(0, 0, size, size).data, size, size);
         if (!stats) { contrastKey = null; return; }
         contrastStats = stats;
+        // applyView() re-solves the editor opacity from these stats and reports the
+        // resulting numbers, so there is no separate report call here.
         applyView(lastPayload || {}, el);
-        var floor = wbContrast(stats, wbThemeKind(), contrastMode());
-        var scrim = Math.max(userScrim === null ? 0 : userScrim, floor.scrim);
-        var text = wbTextContrast(stats, floor, scrim);
-        reportContrast(contrastKey, 'p95=' + stats.p95 + ' busy=' + stats.busy + ' scrim=' + scrim
-          + ' editorAlpha=' + (text ? text.alpha : '?'));
-          + (text ? ' 代码文字对比度=' + text.ratio.toFixed(2) + ':1（bg=' + text.bg.toFixed(3) + ' fg=' + text.fg.toFixed(3) + '）' : ''));
       } catch (e) {
         // The live layer may be unreadable (an engine canvas whose textures came from
         // another origin without CORS) or may not have painted yet. Fall back to the
@@ -1174,7 +1170,23 @@ export function buildJs(origin: string): string {
    * The readability measurement, in its own /probe slot: the scene report is rewritten
    * on every poll (already-mounted) and would swallow this line, and this is the number
    * that answers "is the code readable?" without a screenshot.
+   *
+   * Called both after a fresh pixel sample AND whenever a slider/mode changes: the
+   * pixels do not need re-reading for that, but the NUMBER the user reads does have to
+   * follow the settings, otherwise /probe describes a configuration that is no longer
+   * in force.
    */
+  function reportMeasurement() {
+    if (!contrastStats) return;
+    var floor = wbContrast(contrastStats, wbThemeKind(), contrastMode());
+    var scrim = Math.max(userScrim === null ? 0 : userScrim, floor.scrim);
+    var text = wbTextContrast(contrastStats, floor, scrim);
+    reportContrast(contrastKey, 'p95=' + contrastStats.p95 + ' busy=' + contrastStats.busy + ' scrim=' + scrim
+      + ' chromeAlpha=' + (typeof (lastPayload && lastPayload.chromeGlassAlpha) === 'number' ? lastPayload.chromeGlassAlpha : '?')
+      + ' editorAlpha=' + (text ? text.alpha : '?')
+      + (text ? ' 代码文字对比度=' + text.ratio.toFixed(2) + ':1（bg=' + text.bg.toFixed(3) + ' fg=' + text.fg.toFixed(3) + '）' : ''));
+  }
+
   function reportContrast(key, extra) {
     try {
       var tt = 'absent';
@@ -1459,6 +1471,8 @@ export function buildJs(origin: string): string {
       var solved = solveEditorAlpha();
       var effectiveEditor = Math.max(userEditorAlpha === null ? 0 : userEditorAlpha, solved);
       document.documentElement.style.setProperty('--we-wb-editor-alpha', String(Math.round(effectiveEditor * 1000) / 1000));
+      // The numbers a slider changes have to follow it in /probe too (no re-sampling).
+      reportMeasurement();
       if (scrim !== null) userScrim = scrim;
       // The effective dimming is the stronger of what the user asked for and what
       // the wallpaper's own brightness says the text needs.
@@ -1512,6 +1526,12 @@ export function buildJs(origin: string): string {
             if (stillImg) stillImg.setAttribute('src', payload.still);
           }
           mountScene(payload);
+          // Live kinds do not call applyView on their own, so a slider moved while a
+          // Scene is mounted used to reach /current and stop there — the page kept the
+          // values it booted with (measured: the readability readout froze at 4.51:1
+          // while the settings said "off"). Re-apply on every poll; applyView() only
+          // writes when a value actually changed.
+          applyView(payload, active);
         } else if (payload.kind === 'web' && payload.url) {
           // Opt-in live Web wallpaper: the still preview is the backdrop AND the
           // fallback, the author app renders in the sandboxed stub frame on top of it
@@ -1522,6 +1542,7 @@ export function buildJs(origin: string): string {
             if (webStill) webStill.setAttribute('src', payload.still);
           }
           mountWeb(payload);
+          applyView(payload, active); // same reason as the Scene branch above
         } else if (payload.kind === 'image') {
           // Still (Scene preview, poster-only wallpapers). A <video> would render
           // nothing at all here, which is why those wallpapers looked broken.
