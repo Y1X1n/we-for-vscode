@@ -186,11 +186,14 @@ export class MediaServer {
   private viewOpacity = 1;
   private viewScrim = 0.35;
   /** Readability policy: the page measures its own pixels, this is the user's mode. */
-  private viewContrast: 'off' | 'balanced' | 'strong' = 'balanced';
+  private viewContrast: 'off' | 'balanced' | 'strong' = 'off';
   /** Frosted chrome / editor surface: shared blur radius and the two alphas. */
   private viewBlur = 16;
   private viewChromeAlpha = 0;
   private viewEditorAlpha = 0;
+  /** One saturation and one glass colour for every glass surface, panel included. */
+  private viewSaturate = 1.3;
+  private viewGlassColor = '#101014';
   /**
    * Windows listening on `/events` (server-sent events).
    *
@@ -218,6 +221,8 @@ export class MediaServer {
       blur: this.viewBlur,
       chromeGlassAlpha: this.viewChromeAlpha,
       editorGlassAlpha: this.viewEditorAlpha,
+      saturate: this.viewSaturate,
+      glassColor: this.viewGlassColor,
     };
   }
 
@@ -407,6 +412,8 @@ export class MediaServer {
     blur?: number;
     chromeGlassAlpha?: number;
     editorGlassAlpha?: number;
+    saturate?: number;
+    glassColor?: string;
   }): void {
     if (typeof view.opacity === 'number') this.viewOpacity = view.opacity;
     if (typeof view.scrim === 'number') this.viewScrim = view.scrim;
@@ -416,6 +423,10 @@ export class MediaServer {
     if (typeof view.blur === 'number') this.viewBlur = view.blur;
     if (typeof view.chromeGlassAlpha === 'number') this.viewChromeAlpha = view.chromeGlassAlpha;
     if (typeof view.editorGlassAlpha === 'number') this.viewEditorAlpha = view.editorGlassAlpha;
+    if (typeof view.saturate === 'number') this.viewSaturate = view.saturate;
+    if (typeof view.glassColor === 'string' && /^#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?$/.test(view.glassColor)) {
+      this.viewGlassColor = view.glassColor;
+    }
     // Every listener applies it now, not on its next poll.
     this.broadcastView();
   }

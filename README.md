@@ -59,7 +59,7 @@
 # 先完全关闭 VS Code（整窗背景层是文件级补丁，运行中安装会留给 webview 一个
 # "Could not register service worker" 报错）
 & "$env:LOCALAPPDATA\Programs\Microsoft VS Code\bin\code.cmd" `
-  --install-extension .\we-for-vscode-0.1.5.vsix --force
+  --install-extension .\we-for-vscode-0.1.6.vsix --force
 ```
 
 装好后启动 VS Code：扩展会自动激活，壁纸视图用 `Ctrl+Alt+W` 打开。
@@ -71,7 +71,7 @@ git clone https://github.com/Y1X1n/we-for-vscode.git
 cd we-for-vscode
 npm install
 npm run verify                        # tsc + node --test
-npx vsce package --no-dependencies    # 产出 we-for-vscode-0.1.5.vsix
+npx vsce package --no-dependencies    # 产出 we-for-vscode-0.1.6.vsix
 ```
 
 ### 打开“铺满整个窗口”
@@ -104,14 +104,17 @@ npx vsce package --no-dependencies    # 产出 we-for-vscode-0.1.5.vsix
 | `weWallpaper.wallpaperId` | `""` | 当前壁纸 id；留空 = 自动选第一张可播放的。面板里选壁纸会写回这里 |
 | `weWallpaper.steamRoot` | `""` | 手动指定 Steam 根目录，多个用 `;` 分隔 |
 | `weWallpaper.mediaPort` | `39127` | 本地媒体服务端口（仅 `127.0.0.1`）。端口与 token 必须稳定 |
-| `weWallpaper.blur` | `16` | 玻璃面板模糊半径 px（0–60） |
-| `weWallpaper.saturate` | `1.3` | 玻璃背景饱和度 |
-| `weWallpaper.glassAlpha` | `0.45` | 玻璃底色不透明度（会被可读性下限抬升） |
-| `weWallpaper.glassColor` | `#101014` | 玻璃底色 |
-| `weWallpaper.panelWidth` | `420` | 面板宽度 px |
-| `weWallpaper.border` | `1` | 玻璃边框宽度 px |
-| `weWallpaper.scrim` | `0.35` | 壁纸之上的暗化层强度 |
-| `weWallpaper.wallpaperOpacity` | `1` | 壁纸图层不透明度 |
+| `weWallpaper.blur` | `16` | 玻璃模糊半径 px（0–60）。面板 / 侧栏 / 标题栏 / 状态栏 / 终端面板共用；代码区不模糊 |
+| `weWallpaper.saturate` | `1.3` | 玻璃背景饱和度。面板与整窗玻璃共用 |
+| `weWallpaper.glassAlpha` | `0.45` | 玻璃底色不透明度（0 = 完全透明）。面板与侧栏/标题栏/终端面板共用（同步写入 `chromeGlassAlpha`） |
+| `weWallpaper.glassColor` | `#101014` | 玻璃底色。面板与整窗玻璃共用；保持默认值 = 跟随主题色调 |
+| `weWallpaper.chromeGlassAlpha` | `0.45` | 侧栏 / 活动栏 / 标题栏 / 状态栏 / 终端面板的玻璃不透明度（0 = 关闭，**不做任何抬升**） |
+| `weWallpaper.editorGlassAlpha` | `0.72` | 代码区底衬不透明度（0 = 完全透明，直接看到壁纸，**不做任何抬升**） |
+| `weWallpaper.autoContrast` | `off` | 自动可读性：`off` 只**测量并显示**对比度（滑块说了算）；`balanced` / `strong` 会把暗化层与代码区底衬**抬到**约 4.5:1 / 7:1（作为下限） |
+| `weWallpaper.panelWidth` | `420` | 面板宽度 px（仅面板） |
+| `weWallpaper.border` | `1` | 玻璃边框宽度 px（仅面板） |
+| `weWallpaper.scrim` | `0.35` | 暗化层强度（0 = 完全透明）。面板与整窗共用（同步写入 `workbenchScrim`） |
+| `weWallpaper.wallpaperOpacity` | `1` | 壁纸图层不透明度。面板与整窗共用（同步写入 `workbenchOpacity`） |
 | `weWallpaper.pauseWhenHidden` | `true` | 面板不可见或窗口失焦时暂停 |
 | `weWallpaper.autoRotateSeconds` | `0` | 幻灯片间隔秒数（0 = 关闭，只轮播 Video） |
 | `weWallpaper.workbenchBackground` | `false` | **实验**：壁纸铺满整个 VS Code（改安装目录，可还原） |

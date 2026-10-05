@@ -208,7 +208,10 @@ test('every surface that renders the wallpaper applies the floor', () => {
   const manifest = JSON.parse(read('package.json'));
   const setting = manifest.contributes.configuration.properties['weWallpaper.autoContrast'];
   assert.deepEqual(setting.enum, ['off', 'balanced', 'strong'], 'autoContrast 必须是三档');
-  assert.equal(setting.default, 'balanced', '默认开启（可读性不能被滑块归零）');
+  // Default OFF: the sliders are the truth. A floor that silently raised them was
+  // reported as "任何参数调节之后都没有用" — the user wants to be able to set 暗化层 to
+  // transparent, and the measurement is a read-out unless they opt in.
+  assert.equal(setting.default, 'off', '默认关闭：滑块说了算，测量只作为读数');
 
   const js = buildJs('http://127.0.0.1:39127');
   assert.match(js, /var effective = Math\.max\(userScrim === null \? 0 : userScrim, floor\.scrim\)/, '整窗层取滑块与实测值的较大者');
