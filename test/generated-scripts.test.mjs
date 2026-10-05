@@ -158,16 +158,24 @@ test('the panel has an apply button and the host answers it', () => {
   assert.match(html, /id="btn-apply"[\s\S]*?立即生效/, '面板要有「立即生效」按钮');
   assert.match(html, /id="apply-hint"/, '按钮旁要有结果提示位');
   const main = read('media/main.mjs');
-  assert.match(main, /vscode\.postMessage\(\{ type: 'apply' \}\)/, '点击要通知主机');
+  // The click carries the panel's CURRENT values: the configuration may still hold the
+  // previous ones (the webview debounces its writes by 150 ms and a config write is
+  // async), and asking the host to read the config is what made the button revert a
+  // slider and push the old value — reported as "点了立即生效会回弹，也没生效".
+  assert.match(main, /vscode\.postMessage\(\{ type: 'apply', settings: \{ \.\.\.state\.settings \} \}\)/, '点击要带上面板当前值');
+  assert.match(main, /const pendingSettings = createPendingSettings\(\);/, '要记录未落地的设置（纯模块，见 settings-sync.test.mjs）');
+  assert.match(main, /pendingSettings\.merge\(state\.settings, msg\.settings\)/, '主机回显要经过 pending 合并');
+  assert.match(read('media/settings-sync.mjs'), /export function createPendingSettings/, '回弹竞态必须由可测的纯模块承载');
   // The webview → host API is `vscode.postMessage`; there is no bare `post()` helper.
   // A call to one would throw at click time and look exactly like a dead button
   // (measured: the button did nothing at all until this was fixed).
   assert.ok(!/(^|[^\w.])post\(/.test(main), '面板必须用 vscode.postMessage(...)，没有 post() 助手');
   assert.match(main, /case 'applied':/, '要处理主机回执');
   assert.match(main, /资源已更新，需要重载窗口/, '资源过期时要如实说需要重载');
-  assert.match(read('src/panel/panel.ts'), /onApplyRequest\(\): void/, 'PanelHooks 要有 onApplyRequest');
+  assert.match(read('src/panel/panel.ts'), /onApplyRequest\(settings\?: Record<string, unknown>\): void/, 'PanelHooks 要能接收面板值');
   assert.match(read('src/panel/panel.ts'), /case 'apply':/, 'panel.ts 要转发 apply 消息');
   const ext = read('src/extension.ts');
-  assert.match(ext, /const applyNow = async \(\): Promise<void>/, '主机要能立即应用');
+  assert.match(ext, /const applyNow = async \(settings\?: Record<string, unknown>\)/, '主机要接收面板值');
+  assert.match(ext, /const writePanelSettings = async/, '要先写未落地的设置再推送');
   assert.match(ext, /if \(status\.assetsUpdated\)/, '资源过期时要提示重载，而不是假装成功');
 });

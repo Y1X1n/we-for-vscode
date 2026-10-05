@@ -20,6 +20,7 @@ import { buildGlassVars, clamp, LIMITS, renderModeLabel, themeKindFromClassList 
 import { contrastFloor as contrastFloorMath, fillChannels, luminanceStats } from './contrast.mjs';
 import { computeLayerState, playButtonLabel } from './render-state.mjs';
 import { isLive, mountWallpaper } from './renderer.mjs';
+import { createPendingSettings } from './settings-sync.mjs';
 
 const vscode = acquireVsCodeApi();
 
@@ -594,7 +595,22 @@ el.libSearch?.addEventListener('input', () => renderLibrary());
 // ── controls ────────────────────────────────────────────────────────────────
 
 let settingTimer = null;
+/**
+ * Values this panel has changed but the host has not confirmed yet (see
+ * media/settings-sync.mjs for the race it guards, and its tests).
+ *
+ * Two races made 「立即生效」 look broken without this (both reproduced by the user):
+ *  - the write is debounced by 150 ms, so a click right after a drag asked the host for
+ *    a config that did not contain the new value yet — it echoed the old one back and
+ *    syncInputs() snapped the slider back;
+ *  - the host's write is async, so even past the debounce the echo could still be the
+ *    previous value.
+ * A pending value wins over the echo until the host reports it back, and the apply
+ * button sends the whole map so the host writes the real values before pushing.
+ */
+const pendingSettings = createPendingSettings();
 function pushSetting(key, value) {
+  pendingSettings.set(key, value);
   clearTimeout(settingTimer);
   settingTimer = setTimeout(() => {
     vscode.postMessage({ type: 'setting', key, value });
@@ -628,7 +644,10 @@ document.getElementById('in-glassColor')?.addEventListener('input', (e) => {
 const applyBtn = document.getElementById('btn-apply');
 const applyHint = document.getElementById('apply-hint');
 applyBtn?.addEventListener('click', () => {
-  vscode.postMessage({ type: 'apply' });
+  // The panel's own values go with the click: they are the ones the user just set, and
+  // the host writes them before pushing (the debounced write may not have landed yet).
+  clearTimeout(settingTimer);
+  vscode.postMessage({ type: 'apply', settings: { ...state.settings } });
   applyGlass();
   applyBtn.textContent = '已发送 ✓';
   applyBtn.disabled = true;
@@ -658,7 +677,9 @@ window.addEventListener('message', (event) => {
       syncInputs();
       break;
     case 'settings':
-      state.settings = { ...state.settings, ...(msg.settings || {}) };
+      // A slider the user just moved must not snap back to a value the host has not
+      // written yet — that is what made 「立即生效」 look like it reverted the change.
+      state.settings = pendingSettings.merge(state.settings, msg.settings);
       measureContrast();
       applyGlass();
       syncInputs();
