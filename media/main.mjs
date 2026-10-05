@@ -622,13 +622,32 @@ for (const [key, inputId] of SLIDERS) {
   const input = document.getElementById(inputId);
   if (!input) continue;
   input.addEventListener('input', () => {
-    const raw = Number(input.value);
-    state.settings[key] = key === 'border' || key === 'blur' || key === 'panelWidth' ? Math.round(raw) : clamp(raw, ...LIMITS[key]);
-    applyGlass();
-    syncInputs();
-    pushSetting(key, state.settings[key]);
+    // The limits fall back to the input's own min/max: a slider whose key is missing
+    // from LIMITS used to throw on `clamp(raw, ...undefined)`, which killed the rest of
+    // this handler — the slider moved, nothing was written, and it looked like a slider
+    // that simply does not work (that was 侧边栏磨砂 and 代码区底衬 until 0.1.7).
+    const limits = LIMITS[key] || [Number(input.min) || 0, Number(input.max) || 1];
+    try {
+      const raw = Number(input.value);
+      state.settings[key] =
+        key === 'border' || key === 'blur' || key === 'panelWidth'
+          ? Math.round(raw)
+          : clamp(raw, limits[0], limits[1]);
+      applyGlass();
+      syncInputs();
+      pushSetting(key, state.settings[key]);
+    } catch (err) {
+      log('error', `滑块 ${key} 处理失败：${err && err.message ? err.message : String(err)}`);
+    }
   });
 }
+
+// Anything thrown at the top level of the panel used to be invisible: the panel simply
+// stopped responding and the extension log stayed clean. Surface it instead.
+window.addEventListener('error', (e) => log('error', `面板脚本异常：${e.message}`));
+window.addEventListener('unhandledrejection', (e) =>
+  log('error', `面板 Promise 异常：${e.reason && e.reason.message ? e.reason.message : String(e.reason)}`),
+);
 
 document.getElementById('in-glassColor')?.addEventListener('input', (e) => {
   state.settings.glassColor = e.target.value;
