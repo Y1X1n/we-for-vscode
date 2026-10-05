@@ -191,6 +191,55 @@ export class MediaServer {
   private viewBlur = 16;
   private viewChromeAlpha = 0;
   private viewEditorAlpha = 0;
+  /**
+   * Windows listening on `/events` (server-sent events).
+   *
+   * The 15 s poll stays as the fallback, but it is not enough on its own: Chromium
+   * throttles timers to roughly once a minute while the window is occluded, so a
+   * slider moved in the panel could take a minute to appear — which reads as "the
+   * setting does nothing". A push is immune to that.
+   */
+  private readonly viewClients = new Set<http.ServerResponse>();
+
+  /**
+   * The payload `/current` returns and `/events` pushes — one builder, so the poll and
+   * the push can never disagree about what the view is.
+   */
+  private currentPayload(): Record<string, unknown> {
+    return {
+      url: this.currentUrl,
+      kind: this.currentKind,
+      still: this.currentStill,
+      engine: this.currentKind === 'scene' || this.currentKind === 'web' ? this.engineUrl : null,
+      port: this.boundPort,
+      opacity: this.viewOpacity,
+      scrim: this.viewScrim,
+      contrast: this.viewContrast,
+      blur: this.viewBlur,
+      chromeGlassAlpha: this.viewChromeAlpha,
+      editorGlassAlpha: this.viewEditorAlpha,
+    };
+  }
+
+  /**
+   * Push the current payload to every window listening on `/events`.
+   *
+   * Why a stream and not just the 15 s poll: Chromium throttles timers to roughly once
+   * a minute while the window is occluded, so a slider moved in the panel could take a
+   * minute to show up in the window — which reads as "the setting does nothing". A push
+   * is immune to that, and it is what makes the panel's 「立即生效」 button instant.
+   */
+  private broadcastView(): void {
+    if (!this.viewClients.size) return;
+    const frame = `event: view\ndata: ${JSON.stringify(this.currentPayload())}\n\n`;
+    for (const client of this.viewClients) {
+      try {
+        client.write(frame);
+      } catch {
+        this.viewClients.delete(client);
+      }
+    }
+  }
   /** Directory tokens for scene payloads (see registerDir). */
   private readonly dirTokens = new Map<string, string>();
   private readonly dirByToken = new Map<string, string>();
@@ -346,6 +395,8 @@ export class MediaServer {
       this.currentKind = target.kind;
       this.currentStill = target.still ?? null;
     }
+    // A wallpaper switch is a view change too: the windows should not wait for a poll.
+    this.broadcastView();
   }
 
   /** Wallpaper-layer opacity / scrim / contrast / glass, pushed to the page at runtime. */
@@ -365,6 +416,8 @@ export class MediaServer {
     if (typeof view.blur === 'number') this.viewBlur = view.blur;
     if (typeof view.chromeGlassAlpha === 'number') this.viewChromeAlpha = view.chromeGlassAlpha;
     if (typeof view.editorGlassAlpha === 'number') this.viewEditorAlpha = view.editorGlassAlpha;
+    // Every listener applies it now, not on its next poll.
+    this.broadcastView();
   }
 
   get current(): string | null {
@@ -542,21 +595,38 @@ export class MediaServer {
     // sending them here is what keeps workbench.html and its cached css constant.
     if (url.pathname === '/current') {
       res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' });
-      res.end(
-        JSON.stringify({
-          url: this.currentUrl,
-          kind: this.currentKind,
-          still: this.currentStill,
-          engine: this.currentKind === 'scene' || this.currentKind === 'web' ? this.engineUrl : null,
-          port: this.boundPort,
-          opacity: this.viewOpacity,
-          scrim: this.viewScrim,
-          contrast: this.viewContrast,
-          blur: this.viewBlur,
-          chromeGlassAlpha: this.viewChromeAlpha,
-          editorGlassAlpha: this.viewEditorAlpha,
-        }),
-      );
+      res.end(JSON.stringify(this.currentPayload()));
+      return;
+    }
+
+    // Server-sent events: the same payload, pushed the moment anything changes.
+    // `connect-src http://127.0.0.1:*` already allows it from the patched document,
+    // and EventSource reconnects on its own (retry: below) if the server restarts.
+    if (url.pathname === '/events') {
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream; charset=utf-8',
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-store',
+        Connection: 'keep-alive',
+      });
+      res.write('retry: 3000\n\n');
+      res.write(`event: view\ndata: ${JSON.stringify(this.currentPayload())}\n\n`);
+      this.viewClients.add(res);
+      // A comment frame every 25 s keeps proxies/idle timeouts from closing it; the
+      // page ignores anything that is not a `view` event.
+      const heartbeat = setInterval(() => {
+        try {
+          res.write(': ping\n\n');
+        } catch {
+          /* the close handler below cleans up */
+        }
+      }, 25_000);
+      const drop = (): void => {
+        clearInterval(heartbeat);
+        this.viewClients.delete(res);
+      };
+      res.on('close', drop);
+      res.on('error', drop);
       return;
     }
 
@@ -724,6 +794,16 @@ export class MediaServer {
     const server = this.server;
     this.server = null;
     this.boundPort = 0;
+    // Close the event streams first: server.close() waits for open connections, and an
+    // SSE response never ends on its own.
+    for (const client of this.viewClients) {
+      try {
+        client.end();
+      } catch {
+        /* already gone */
+      }
+    }
+    this.viewClients.clear();
     if (!server) return;
     await new Promise<void>((resolvePromise) => server.close(() => resolvePromise()));
     this.log('info', '壁纸媒体服务已停止');

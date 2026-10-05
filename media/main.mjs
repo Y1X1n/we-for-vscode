@@ -620,6 +620,25 @@ document.getElementById('in-glassColor')?.addEventListener('input', (e) => {
   pushSetting('glassColor', state.settings.glassColor);
 });
 
+// 「立即生效」: settings already reach the windows on their own (the host pushes, and
+// the patched page applies it from the /events stream), so this button is the explicit
+// fallback — a dropped stream, or the asset-update case where only a reload helps.
+// The label flips for a moment because otherwise a working button and a dead one look
+// exactly the same.
+const applyBtn = document.getElementById('btn-apply');
+const applyHint = document.getElementById('apply-hint');
+applyBtn?.addEventListener('click', () => {
+  vscode.postMessage({ type: 'apply' });
+  applyGlass();
+  applyBtn.textContent = '已发送 ✓';
+  applyBtn.disabled = true;
+  window.setTimeout(() => {
+    applyBtn.textContent = '立即生效';
+    applyBtn.disabled = false;
+    if (applyHint) applyHint.hidden = true;
+  }, 2600);
+});
+
 el.play?.addEventListener('click', () => {
   state.paused = !state.paused;
   applyLayerState();
@@ -663,6 +682,14 @@ window.addEventListener('message', (event) => {
       state.panelLive = msg.panelLive !== false;
       measureContrast();
       applyLayerState();
+      break;
+    case 'applied':
+      // The host answered 「立即生效」. `reload` means the assets are newer than what this
+      // window loaded — the one case a button cannot fix on its own.
+      if (applyHint) {
+        applyHint.hidden = false;
+        applyHint.textContent = msg.reload ? '资源已更新，需要重载窗口（已弹出提示）' : '已应用到所有窗口';
+      }
       break;
     case 'visibility':
       state.visible = !!msg.visible;

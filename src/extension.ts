@@ -121,6 +121,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         .catch((err) => log.error(`扫描壁纸库失败：${String(err)}`));
     },
     onNextRequest: (): void => void nextWallpaper(),
+    onApplyRequest: (): void => void applyNow(),
     onSettingChange: async (key: string, value: unknown): Promise<void> => {
       await vscode.workspace.getConfiguration('weWallpaper').update(key, value, vscode.ConfigurationTarget.Global);
     },
@@ -301,6 +302,30 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const autoContrastMode = (): 'off' | 'balanced' | 'strong' => {
     const value = vscode.workspace.getConfiguration('weWallpaper').get<string>('autoContrast', 'balanced');
     return value === 'off' || value === 'strong' || value === 'balanced' ? value : 'balanced';
+  };
+
+  /**
+   * Apply the current settings to the windows right now — the panel's 「立即生效」.
+   *
+   * Settings already push on change, and `/events` delivers them in milliseconds, so
+   * this is for the two cases where that is not enough: the stream died (the window
+   * would otherwise wait for its 15 s poll, which Chromium stretches to a minute while
+   * the window is occluded), and an asset update, which genuinely needs a reload —
+   * that one is the usual reason a setting "did nothing" right after an extension
+   * update.
+   */
+  const applyNow = async (): Promise<void> => {
+    pushWorkbenchView();
+    WallpaperPanel.instance?.pushSettings();
+    const status = installer.status();
+    if (status.assetsUpdated) {
+      log.info('立即生效：壁纸资源已更新，需要重载窗口');
+      WallpaperPanel.instance?.post({ type: 'applied', reload: true });
+      await promptReload('壁纸资源已更新：需要重载窗口后生效。');
+      return;
+    }
+    log.info('立即生效：已把当前设置推送到所有已打补丁的窗口');
+    WallpaperPanel.instance?.post({ type: 'applied', reload: false });
   };
 
   const promptReload = async (message: string): Promise<void> => {

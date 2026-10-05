@@ -24,6 +24,8 @@ import { buildBootJs, buildCss, buildJs, buildWebStubHtml, buildWebStubJs } from
 
 const ORIGIN = 'http://127.0.0.1:39127';
 const dir = mkdtempSync(join(tmpdir(), 'we-gen-'));
+/** Read a repo file (the panel and the host are pinned here too, see below). */
+const read = (p) => readFileSync(join(import.meta.dirname, '..', p), 'utf8');
 
 /**
  * Compile without executing, as a MODULE: the generated core legitimately uses
@@ -134,4 +136,38 @@ test('the readability readout follows the settings, not just the pixels', () => 
   assert.match(refresh, /mountScene\(payload\);\s*[\s\S]*?applyView\(payload, active\);/, 'Scene 分支每轮都要重新应用视图');
   assert.match(refresh, /mountWeb\(payload\);\s*[\s\S]*?applyView\(payload, active\);/, 'Web 分支每轮都要重新应用视图');
   assert.match(refresh, /setMode\('image'\);[\s\S]*?applyView\(lastPayload, img\);/, 'image 分支保持原样');
+});
+
+test('the page applies view pushes from /events, with the poll as the fallback', () => {
+  const js = buildJs(ORIGIN);
+  // One payload handler for both paths, so the stream and the poll can never disagree.
+  assert.match(js, /function applyPayload\(payload, video\)/, '载荷处理要抽出来共用');
+  assert.match(js, /\.then\(function \(payload\) \{ applyPayload\(payload, video\); \}\)/, '轮询走同一个处理函数');
+  // The stream: EventSource on /events, applying `view` frames immediately.
+  assert.match(js, /function openViewStream\(video\)/, '页面要订阅 /events');
+  assert.match(js, /new EventSource\(ORIGIN \+ '\/events'\)/, 'EventSource 指向 /events');
+  assert.match(js, /addEventListener\('view', function \(ev\)/, '要处理 view 事件');
+  assert.match(js, /JSON\.parse\(ev\.data\)/, '事件体就是 /current 的载荷');
+  // The fallback stays: if the stream never opens (or dies), the poll still drives it.
+  assert.match(js, /window\.setInterval\(function \(\) \{ refresh\(video\); \}, POLL_MS\)/, '轮询必须保留为兜底');
+  assert.match(js, /if \(viewStream \|\| typeof EventSource !== 'function'\) return;/, '没有 EventSource 时要安静退回轮询');
+});
+
+test('the panel has an apply button and the host answers it', () => {
+  const html = read('media/index.html');
+  assert.match(html, /id="btn-apply"[\s\S]*?立即生效/, '面板要有「立即生效」按钮');
+  assert.match(html, /id="apply-hint"/, '按钮旁要有结果提示位');
+  const main = read('media/main.mjs');
+  assert.match(main, /vscode\.postMessage\(\{ type: 'apply' \}\)/, '点击要通知主机');
+  // The webview → host API is `vscode.postMessage`; there is no bare `post()` helper.
+  // A call to one would throw at click time and look exactly like a dead button
+  // (measured: the button did nothing at all until this was fixed).
+  assert.ok(!/(^|[^\w.])post\(/.test(main), '面板必须用 vscode.postMessage(...)，没有 post() 助手');
+  assert.match(main, /case 'applied':/, '要处理主机回执');
+  assert.match(main, /资源已更新，需要重载窗口/, '资源过期时要如实说需要重载');
+  assert.match(read('src/panel/panel.ts'), /onApplyRequest\(\): void/, 'PanelHooks 要有 onApplyRequest');
+  assert.match(read('src/panel/panel.ts'), /case 'apply':/, 'panel.ts 要转发 apply 消息');
+  const ext = read('src/extension.ts');
+  assert.match(ext, /const applyNow = async \(\): Promise<void>/, '主机要能立即应用');
+  assert.match(ext, /if \(status\.assetsUpdated\)/, '资源过期时要提示重载，而不是假装成功');
 });

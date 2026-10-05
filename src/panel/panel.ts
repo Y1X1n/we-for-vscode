@@ -27,6 +27,13 @@ export interface PanelHooks {
    */
   onNeedsInventory(): void;
   onNextRequest(): void;
+  /**
+   * The panel's 「立即生效」 button: apply the current settings to the windows now.
+   * Settings already push on change (and over /events), so this exists for the cases
+   * where that is not enough — a dropped stream, or an asset update that genuinely
+   * needs a window reload.
+   */
+  onApplyRequest(): void;
   onSettingChange(key: string, value: unknown): Promise<void>;
   onWebviewLog(level: 'info' | 'warn' | 'error', message: string): void;
 }
@@ -149,6 +156,9 @@ export class WallpaperPanel {
         break;
       case 'next':
         this.hooks.onNextRequest();
+        break;
+      case 'apply':
+        this.hooks.onApplyRequest();
         break;
       case 'setting':
         if (typeof msg.key === 'string') await this.hooks.onSettingChange(msg.key, msg.value);
