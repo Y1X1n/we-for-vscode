@@ -615,14 +615,27 @@ ${scope} .monaco-workbench .part.editor .editor-container .overflow-guard > .mon
  * Cost note: a blur over an ANIMATED wallpaper is recomputed every frame for the
  * area it covers. That is why the radius is shared with the panel's glass slider
  * (default 16px) rather than something larger, and why 0 is a supported value.
+ *
+ * Why a ::before and not the part itself: backdrop-filter (like filter) creates a
+ * STACKING CONTEXT, and the chrome parts host popups — the menubar's dropdowns, hover
+ * widgets, the panel's menus. Trapped in the part's context, a popup's own z-index stops
+ * mattering and later-painted siblings (the sidebar, the editor surface) cover it: the
+ * File menu rendered under the wallpaper with no background at all. A pseudo-element
+ * keeps the frosted look (it blurs what is behind the part, exactly as before) while
+ * leaving the part itself free of any stacking context.
  */
-${scope} .monaco-workbench .part.activitybar,
-${scope} .monaco-workbench .part.sidebar,
-${scope} .monaco-workbench .part.auxiliarybar,
-${scope} .monaco-workbench .part.titlebar,
-${scope} .monaco-workbench .part.statusbar,
-${scope} .monaco-workbench .part.panel {
-\tbackground-color: rgba(var(--we-wb-glass-rgb), var(--we-wb-glass-alpha, 0)) !important;
+${scope} .monaco-workbench .part.activitybar::before,
+${scope} .monaco-workbench .part.sidebar::before,
+${scope} .monaco-workbench .part.auxiliarybar::before,
+${scope} .monaco-workbench .part.titlebar::before,
+${scope} .monaco-workbench .part.statusbar::before,
+${scope} .monaco-workbench .part.panel::before {
+\tcontent: '';
+\tposition: absolute;
+\tinset: 0;
+\tz-index: -1;
+\tpointer-events: none;
+\tbackground-color: rgba(var(--we-wb-glass-rgb), var(--we-wb-glass-alpha, 0));
 \tbackdrop-filter: blur(var(--we-wb-glass-blur, 0px)) saturate(var(--we-wb-glass-saturate, 1.25));
 \t-webkit-backdrop-filter: blur(var(--we-wb-glass-blur, 0px)) saturate(var(--we-wb-glass-saturate, 1.25));
 }
@@ -1760,6 +1773,18 @@ export function buildJs(origin: string): string {
         // The *inline* background is what VS Code reads back and forwards to
         // Electron's setTitleBarOverlay; CSS !important does not change it.
         inlineBg: el.style && el.style.backgroundColor ? el.style.backgroundColor : '',
+        // A backdrop-filter on the element itself would create a stacking context and
+        // trap the menubar's dropdowns under the later-painted parts (measured: the File
+        // menu rendered with no background). The frosting therefore lives on ::before,
+        // and these two fields are how that is verified without opening a menu: the
+        // element must report "none", the pseudo-element the blur.
+        backdrop: cs.backdropFilter || cs.webkitBackdropFilter || '',
+        backdropBefore: (function () {
+          try {
+            var ps = window.getComputedStyle(el, '::before');
+            return ps.backdropFilter || ps.webkitBackdropFilter || '';
+          } catch (e) { return ''; }
+        })(),
         box: Math.round(el.getBoundingClientRect().width) + 'x' + Math.round(el.getBoundingClientRect().height)
       };
     }
