@@ -1,11 +1,10 @@
 {
   "name": "we-for-vscode",
-  "displayName": "Wallpaper Engine for VS Code (PoC)",
-  "description": "把本机 Wallpaper Engine 壁纸渲染进 VS Code 的壁纸视图，配 iOS 风格液态玻璃面板。Port of dsh-wallpaper-engine (MIT) — PoC step 1: library discovery + Video playback + glass controls.",
-  "version": "0.1.10",
-  "publisher": "local-poc",
+  "displayName": "Wallpaper Engine for VS Code",
+  "description": "Live Wallpaper Engine wallpapers inside VS Code — video, Scene and Web wallpapers behind the whole window, with iOS-style liquid glass and automatic text readability. Unofficial; reads your locally installed Wallpaper Engine library.",
+  "version": "0.1.11",
+  "publisher": "y1x1n",
   "license": "MIT",
-  "private": true,
   "repository": {
     "type": "git",
     "url": "https://github.com/Y1X1n/we-for-vscode.git"
@@ -19,8 +18,14 @@
   "keywords": [
     "wallpaper",
     "wallpaper-engine",
+    "live-wallpaper",
     "background",
-    "glass"
+    "glass",
+    "blur",
+    "frosted",
+    "scene",
+    "webgl",
+    "video"
   ],
   "main": "./out/extension.js",
   "activationEvents": [
@@ -266,5 +271,15 @@
     "@types/node": "^22.10.2",
     "@types/vscode": "1.90.0",
     "typescript": "^5.7.2"
+  },
+  "icon": "icon.png",
+  "pricing": "Free",
+  "galleryBanner": {
+    "color": "#180E26",
+    "theme": "dark"
+  },
+  "homepage": "https://github.com/Y1X1n/we-for-vscode#readme",
+  "bugs": {
+    "url": "https://github.com/Y1X1n/we-for-vscode/issues"
   }
 }
