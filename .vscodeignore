@@ -5,6 +5,7 @@
 .vscode/**
 .gitignore
 .gitattributes
+CONTRIBUTING.md
 src/**
 test/**
 tools/**

@@ -218,10 +218,16 @@ export class WallpaperService {
    * document from a blob URL, while a Web wallpaper's author app may only be framed by
    * the stub page dropped next to workbench.html (see patch.ts buildWebStubHtml), so
    * `url` carries the project-directory base either way.
+   *
+   * `surface` is the user's live-surface preference (weWallpaper.liveSurface): with
+   * `'panel'` this layer degrades to the still, because rendering the same wallpaper
+   * twice costs a second engine instance with nothing to show for it. `'workbench'`
+   * and `'both'` behave identically here — the difference is on the panel's side.
    */
   workbenchTargetFor(
     item: WallpaperItem | undefined,
     liveScene = false,
+    surface: 'both' | 'workbench' | 'panel' = 'both',
   ): { url: string; kind: 'video' | 'image' | 'scene' | 'web'; still?: string | null } | null {
     if (!item) return null;
     if (item.renderMode === 'video' && item.media) return { url: item.media, kind: 'video' };
@@ -231,10 +237,10 @@ export class WallpaperService {
     // the stub page, which is same-origin). Both put a full-screen animated surface
     // behind the entire UI — the arrangement that produced the stale-layer artifacts
     // in the first place — hence default off, still as fallback.
-    if (liveScene && item.renderMode === 'scene' && item.sceneBase) {
+    if (liveScene && surface !== 'panel' && item.renderMode === 'scene' && item.sceneBase) {
       return { url: item.sceneBase, kind: 'scene', still: item.preview };
     }
-    if (liveScene && item.renderMode === 'web' && item.sceneBase) {
+    if (liveScene && surface !== 'panel' && item.renderMode === 'web' && item.sceneBase) {
       return { url: item.sceneBase, kind: 'web', still: item.preview };
     }
     if (item.preview) return { url: item.preview, kind: 'image' };

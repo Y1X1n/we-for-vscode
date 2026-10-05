@@ -1028,7 +1028,25 @@ export function buildJs(origin: string): string {
         return lib.mount(host, {
           source: lib.httpSource(key),
           fit: 'cover',
-          fps: 30,
+          // Whole-window layer tuning. This surface lives behind a translucent UI, so
+          // it does not need the panel's sharpness or frame rate:
+          //   renderDpr  — sets the canvas backing store (measured: 0.5 gives a
+          //                613x413 canvas for a 1226x826 CSS box, and "auto" gives the
+          //                device ratio, 1839x1239 here). 1 means exactly one canvas
+          //                pixel per CSS pixel: 2.25x fewer pixels than native-DPR
+          //                rendering, and on a 150% display the 1.5x upscale is not
+          //                visible behind the UI — while 0.5 measured as a 9x cut that
+          //                is visibly soft for wallpapers with crisp detail (Web
+          //                wallpapers with text/UI). It also picks the engine's texture
+          //                bucket (>=1.5 -> 1.0, >=0.9 -> 0.8, else 0.6), so 1 lands on
+          //                0.8 — slightly SHARPER textures than "auto" (0.75).
+          //   fps 24     — the background is static chrome plus one animated surface;
+          //                24 is indistinguishable there and saves a fifth of the work.
+          //   particles  — 'medium' scales the emitter budget (engine: low .4 / med .7
+          //                / high 1); heavy scenes spend real main-thread time here.
+          renderDpr: 1,
+          fps: 24,
+          particles: 'medium',
           autoplay: true,
           volume: 0,
         });
@@ -1040,7 +1058,7 @@ export function buildJs(origin: string): string {
         failures = 0;
         setFallback(false);
         var c = host.querySelector('canvas');
-        reportLayer('mounted', key, c ? (c.width + 'x' + c.height + ' css ' + c.clientWidth + 'x' + c.clientHeight) : 'no-canvas');
+        reportLayer('mounted', key, (c ? (c.width + 'x' + c.height + ' css ' + c.clientWidth + 'x' + c.clientHeight) : 'no-canvas') + '; tuned renderDpr=1 fps=24 particles=medium');
         // One captured frame ~5s in: if the canvas renders black in this environment
         // (GPU/compositing), the pixels say so when the error messages cannot.
         window.setTimeout(function () {
@@ -1523,7 +1541,9 @@ export function buildWebStubJs(): string {
       return lib.mount(host, {
         source: lib.httpSource(KEY),
         fit: 'cover',
-        fps: 30,
+        // Same tuning policy as the Scene path: this layer is not the one the user
+        // reads text through, and a Web wallpaper's frame clock is only a heartbeat.
+        fps: 24,
         autoplay: true,
         volume: 0,
         onDiagnostic: function (msg, level) {

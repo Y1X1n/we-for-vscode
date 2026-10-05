@@ -59,7 +59,7 @@
 # 先完全关闭 VS Code（整窗背景层是文件级补丁，运行中安装会留给 webview 一个
 # "Could not register service worker" 报错）
 & "$env:LOCALAPPDATA\Programs\Microsoft VS Code\bin\code.cmd" `
-  --install-extension .\we-for-vscode-0.1.0.vsix --force
+  --install-extension .\we-for-vscode-0.1.1.vsix --force
 ```
 
 装好后启动 VS Code：扩展会自动激活，壁纸视图用 `Ctrl+Alt+W` 打开。
@@ -71,7 +71,7 @@ git clone https://github.com/Y1X1n/we-for-vscode.git
 cd we-for-vscode
 npm install
 npm run verify                        # tsc + node --test
-npx vsce package --no-dependencies    # 产出 we-for-vscode-0.1.0.vsix
+npx vsce package --no-dependencies    # 产出 we-for-vscode-0.1.1.vsix
 ```
 
 ### 打开“铺满整个窗口”
@@ -117,7 +117,8 @@ npx vsce package --no-dependencies    # 产出 we-for-vscode-0.1.0.vsix
 | `weWallpaper.workbenchBackground` | `false` | **实验**：壁纸铺满整个 VS Code（改安装目录，可还原） |
 | `weWallpaper.workbenchOpacity` | `1` | 整窗层壁纸不透明度 |
 | `weWallpaper.workbenchScrim` | `0.35` | 整窗层暗化强度 |
-| `weWallpaper.workbenchLiveScene` | `false` | **实验**：让 **Scene / Web 壁纸在整窗层也实时渲染**（关 = 只显示预览图） |
+| `weWallpaper.workbenchLiveScene` | `false` | **实验**：让 **Scene / Web 壁纸在整窗层也实时渲染**（关 = 只显示预览图）。整窗层按"背景层"定位降配：`renderDpr` 0.5（引擎内部 R=0.6）、24 fps、粒子 `medium`；面板始终全质量 |
+| `weWallpaper.liveSurface` | `workbench` | **同一张 Scene/Web 壁纸由哪一面实时渲染**：`workbench`（默认：整窗层实时、面板显示静图）/ `panel`（反过来）/ `both`（旧行为，同一张壁纸渲染两遍） |
 | `weWallpaper.transparentTitleBar` | `false` | 透明标题栏与右上角三个按钮 |
 | `weWallpaper.logLevel` | `warn` | 输出通道 "Wallpaper Engine" 的日志级别（排错时开 `info`） |
 
@@ -154,6 +155,22 @@ VS Code 没有“把窗口背景交给扩展”的 API，所以这一层是**文
 实时渲染由 **`webwallgl@2.1.0`（MIT）** 完成，随扩展发布在 [`media/webwallgl/`](media/webwallgl/)（附 `LICENSE` 与 `UPSTREAM.json`），由 webview 同源 import、由整窗层经 blob URL 导入。
 
 更细的踩坑记录（CSP 逐指令匹配、`makeOpaque()` 与原生窗口按钮、Trusted Types、多窗口端口接管……）在 [`docs/ENGINEERING-NOTES.zh.md`](docs/ENGINEERING-NOTES.zh.md)。
+
+### 性能
+
+实时渲染跑在**窗口渲染进程的主线程**上——和编辑器 UI 同一条线程——所以这里的花费不只是电，也直接关系到打字是否跟手。实测方法：按 Electron 进程角色（`renderer` / `gpu-process` / `extensionHost`）归因 CPU，并交替 A/B/A/B 采样（本机噪声带 ±5~8% 单核，只做 A→B 会得到错误结论）。
+
+| 配置（面板关闭，150% 缩放，轻量 Scene） | CPU（单核 = 100%） |
+|---|---|
+| 整窗层显示静图（预览 GIF） | 27.5 / 27.9 |
+| 整窗层实时渲染同一张 | 31.4 / 32.2 → **单个实时实例 ≈ +4%** |
+| 重场景（32 层 4K）× 第二个实例 | 40.0 → 44.4 → 再一次 **+4.4%** |
+| 两面都实时 · 窗口最小化 | **3.0**（可见时 42.4）→ 不后台空烧 |
+
+结论落到两个默认行为上：
+
+- **整窗层按"背景"降配**：`renderDpr` 0.5（引擎内部 R=0.6，像素/带宽约 0.64×）、24 fps、粒子 `medium`——它隔着半透明 UI，看不出差别；面板保持全质量。
+- **同一张壁纸默认只渲染一遍**（`weWallpaper.liveSurface = workbench`）：两个引擎实例省掉一个，也就省掉一半主线程压力。切到 `panel` 或 `both` 随时可以，只是要自己承担那份开销。
 
 ## 已知限制
 

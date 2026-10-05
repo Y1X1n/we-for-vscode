@@ -27,5 +27,23 @@ What each one is actually pinning down:
 | `check-workbench-scene.mjs` | A Scene mounts under the real CSP via blob-URL import, and the canvas holds real pixels (a JPEG frame, not a black rectangle). |
 | `check-workbench-web.mjs` | The parent document **cannot** frame the engine's `blob:` author iframe (`frame-src` refuses it — the negative control is in the output), while the same-origin stub **can**, and the author page really paints (its shim's `we-frame` heartbeats arrive). |
 
+## `perf-roles.ps1` — what a live layer actually costs
+
+```powershell
+.\tools\perf-roles.ps1 -Seconds 15 -Label "both live"
+```
+
+CPU and GPU per Electron **process role** (`main` / `renderer` / `gpu-process` /
+`extensionHost`), parsed from each `Code.exe` command line. Two rules make the numbers
+mean something, and skipping either produces a confidently wrong answer:
+
+1. **Attribute by role, never by "all Code processes"** — other extensions otherwise
+   dominate the total (this machine idles around 27% of one core with no wallpaper live
+   at all, and around 45% with a heavy scene, so the wallpaper is a minority term).
+2. **Alternate A/B/A/B**, never A-then-B: the noise band here is ±5–8% of one core,
+   wider than most of the effects being measured.
+
+Measured results and the decisions they drove are in the README's *Performance* section.
+
 The measured results behind these decisions are documented in the source:
 `src/workbench/patch.ts` (`buildWebStubHtml`, `buildWebStubJs`, `mountWeb`, `mountScene`).
