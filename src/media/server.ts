@@ -195,6 +195,11 @@ export class MediaServer {
   private viewSaturate = 1.3;
   private viewGlassColor = '#101014';
   /**
+   * Bumped by `/probe {reReport: true}`: every window re-reports its computed styles.
+   * The report is otherwise a boot-time snapshot, which cannot describe a popup.
+   */
+  private reportSeq = 0;
+  /**
    * Windows listening on `/events` (server-sent events).
    *
    * The 15 s poll stays as the fallback, but it is not enough on its own: Chromium
@@ -223,6 +228,7 @@ export class MediaServer {
       editorGlassAlpha: this.viewEditorAlpha,
       saturate: this.viewSaturate,
       glassColor: this.viewGlassColor,
+      reportSeq: this.reportSeq,
     };
   }
 
@@ -560,7 +566,14 @@ export class MediaServer {
       req.on('end', () => {
         try {
           const parsed = JSON.parse(body) as Record<string, unknown>;
-          if (parsed && typeof parsed === 'object' && 'contrast' in parsed) {
+          if (parsed && typeof parsed === 'object' && parsed.reReport === true) {
+            // "Report your computed styles again, now." The style report fires at boot
+            // (and once more 9 s later), which cannot answer a question about something
+            // that only exists while it is open — a dropdown menu, for instance. Bumping
+            // the sequence makes every window re-report on its next view update.
+            this.reportSeq += 1;
+            this.broadcastView();
+          } else if (parsed && typeof parsed === 'object' && 'contrast' in parsed) {
             // Readability measurement. Its own slot: the scene report fires on every
             // poll and would overwrite it, and this is the number that answers "is the
             // code readable?" when a screenshot cannot be taken.
