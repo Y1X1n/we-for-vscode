@@ -176,8 +176,21 @@ export class MediaServer {
    * timer and would otherwise overwrite the scene report before anyone reads it.
    */
   private lastScene: unknown = null;
+  /**
+   * Last readability measurement from a patched window (wallpaper luminance stats,
+   * the dimming it forced, and the resulting code-text contrast). Own slot for the
+   * same reason as the scene report: it is the only answer to "is the code readable
+   * right now?" that does not need a screenshot.
+   */
+  private lastContrast: unknown = null;
   private viewOpacity = 1;
   private viewScrim = 0.35;
+  /** Readability policy: the page measures its own pixels, this is the user's mode. */
+  private viewContrast: 'off' | 'balanced' | 'strong' = 'balanced';
+  /** Frosted chrome / editor surface: shared blur radius and the two alphas. */
+  private viewBlur = 16;
+  private viewChromeAlpha = 0;
+  private viewEditorAlpha = 0;
   /** Directory tokens for scene payloads (see registerDir). */
   private readonly dirTokens = new Map<string, string>();
   private readonly dirByToken = new Map<string, string>();
@@ -335,10 +348,23 @@ export class MediaServer {
     }
   }
 
-  /** Wallpaper-layer opacity / scrim, pushed to the patched page at runtime. */
-  setView(view: { opacity?: number; scrim?: number }): void {
+  /** Wallpaper-layer opacity / scrim / contrast / glass, pushed to the page at runtime. */
+  setView(view: {
+    opacity?: number;
+    scrim?: number;
+    contrast?: 'off' | 'balanced' | 'strong';
+    blur?: number;
+    chromeGlassAlpha?: number;
+    editorGlassAlpha?: number;
+  }): void {
     if (typeof view.opacity === 'number') this.viewOpacity = view.opacity;
     if (typeof view.scrim === 'number') this.viewScrim = view.scrim;
+    if (view.contrast === 'off' || view.contrast === 'balanced' || view.contrast === 'strong') {
+      this.viewContrast = view.contrast;
+    }
+    if (typeof view.blur === 'number') this.viewBlur = view.blur;
+    if (typeof view.chromeGlassAlpha === 'number') this.viewChromeAlpha = view.chromeGlassAlpha;
+    if (typeof view.editorGlassAlpha === 'number') this.viewEditorAlpha = view.editorGlassAlpha;
   }
 
   get current(): string | null {
@@ -470,7 +496,12 @@ export class MediaServer {
       req.on('end', () => {
         try {
           const parsed = JSON.parse(body) as Record<string, unknown>;
-          if (parsed && typeof parsed === 'object' && 'scene' in parsed) {
+          if (parsed && typeof parsed === 'object' && 'contrast' in parsed) {
+            // Readability measurement. Its own slot: the scene report fires on every
+            // poll and would overwrite it, and this is the number that answers "is the
+            // code readable?" when a screenshot cannot be taken.
+            this.lastContrast = parsed.contrast;
+          } else if (parsed && typeof parsed === 'object' && 'scene' in parsed) {
             this.lastScene = parsed.scene;
           } else {
             this.lastProbe = parsed;
@@ -483,7 +514,7 @@ export class MediaServer {
       return;
     }
     res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' });
-    res.end(JSON.stringify({ ...(typeof this.lastProbe === 'object' && this.lastProbe ? this.lastProbe : {}), scene: this.lastScene }));
+    res.end(JSON.stringify({ ...(typeof this.lastProbe === 'object' && this.lastProbe ? this.lastProbe : {}), scene: this.lastScene, contrast: this.lastContrast }));
     return;
     }
 
@@ -520,6 +551,10 @@ export class MediaServer {
           port: this.boundPort,
           opacity: this.viewOpacity,
           scrim: this.viewScrim,
+          contrast: this.viewContrast,
+          blur: this.viewBlur,
+          chromeGlassAlpha: this.viewChromeAlpha,
+          editorGlassAlpha: this.viewEditorAlpha,
         }),
       );
       return;

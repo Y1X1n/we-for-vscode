@@ -369,6 +369,14 @@ ${scope} .monaco-workbench {
 \t--we-wb-line-tint: rgba(255, 255, 255, 0.07);
 \t--we-wb-editor-wash: rgba(0, 0, 0, 0.12);
 \t--we-wb-editor-wash-strong: rgba(0, 0, 0, 0.22);
+\t/* Tone of the frosted chrome and of the editor's backdrop (see the glass rules
+\t   below). Dark themes frost toward near-black, light themes toward near-white —
+\t   the same two tones the glass panel uses, so the whole window reads as one
+\t   material. Only the TONE is declared here: the alpha and the radius are set on
+\t   <html> by the host's payload, and a declaration in this block would win over it
+\t   (the rules below therefore carry the 0 defaults as var() fallbacks). */
+\t--we-wb-glass-rgb: 16, 16, 20;
+\t--we-wb-editor-rgb: 16, 16, 20;
 \t/* Sticky scroll must OCCLUDE the lines scrolling under it. 0.72 was not enough:
 \t   the wallpaper showed through and the pinned line's text still sat on top of the
 \t   text below it, which is precisely the "residue/duplicated glyphs" artifact.
@@ -386,6 +394,8 @@ ${scope} .monaco-workbench.hc-light {
 \t--we-wb-line-tint: rgba(0, 0, 0, 0.055);
 \t--we-wb-editor-wash: rgba(255, 255, 255, 0.12);
 \t--we-wb-editor-wash-strong: rgba(255, 255, 255, 0.22);
+\t--we-wb-glass-rgb: 250, 250, 250;
+\t--we-wb-editor-rgb: 250, 250, 250;
 \t--we-wb-sticky: rgba(250, 250, 250, 0.96);
 \t--we-wb-sticky-strong: rgba(250, 250, 250, 0.99);
 \t--we-wb-sticky-border: rgba(0, 0, 0, 0.12);
@@ -398,6 +408,11 @@ ${scope} .monaco-workbench.hc-light {
 \tpointer-events: none;
 \toverflow: hidden;
 \tbackground: transparent;
+\t/* Readability blur, set only when the wallpaper is busy enough to need it (see
+\t   wbContrast below). The slight overscale hides the soft edge a filter would
+\t   otherwise leave at the window border. */
+\tfilter: blur(var(--we-wb-blur, 0px));
+\ttransform: scale(var(--we-wb-scale, 1));
 }
 
 html.we-wb-fallback #we-workbench-wallpaper {
@@ -463,7 +478,9 @@ html.we-wb-fallback #we-workbench-wallpaper {
 \t   level puts the scrim back on top of every wallpaper layer, so the dimming slider
 \t   applies to a live Scene and a live Web wallpaper too. */
 \tz-index: 1;
-\tbackground: #000;
+\t/* Colour is a variable because a light theme needs a white wash, not a dark
+\t   scrim: see wbContrast in the script. */
+\tbackground: rgb(var(--we-wb-scrim-rgb, 0, 0, 0));
 \topacity: var(--we-wb-scrim, 0.35);
 }
 
@@ -581,6 +598,44 @@ ${scope} .monaco-workbench .window-controls-container > .window-icon.window-clos
    it, so it is spelled out rather than approximated. */
 ${scope} .monaco-workbench .part.editor .editor-container .overflow-guard > .monaco-scrollable-element {
 \tbackground: transparent !important;
+}
+
+/* ── frosted chrome ─────────────────────────────────────────────────────────
+ *
+ * The sidebar, activity bar, title bar, status bar and the panel get a frosted
+ * backdrop instead of raw wallpaper behind their text: a translucent theme-toned
+ * layer plus a real Gaussian blur of whatever is behind it (backdrop-filter blurs
+ * everything painted below the element in the same stacking context, which is the
+ * wallpaper layer at z-index -1).
+ *
+ * The alpha is the host's chromeGlassAlpha, raised to the theme's readability floor
+ * before it is pushed, and 0 means "off" — in which case these rules paint nothing
+ * at all and the window is exactly the fully transparent one it was before.
+ *
+ * Cost note: a blur over an ANIMATED wallpaper is recomputed every frame for the
+ * area it covers. That is why the radius is shared with the panel's glass slider
+ * (default 16px) rather than something larger, and why 0 is a supported value.
+ */
+${scope} .monaco-workbench .part.activitybar,
+${scope} .monaco-workbench .part.sidebar,
+${scope} .monaco-workbench .part.auxiliarybar,
+${scope} .monaco-workbench .part.titlebar,
+${scope} .monaco-workbench .part.statusbar,
+${scope} .monaco-workbench .part.panel {
+\tbackground-color: rgba(var(--we-wb-glass-rgb), var(--we-wb-glass-alpha, 0)) !important;
+\tbackdrop-filter: blur(var(--we-wb-glass-blur, 0px)) saturate(1.25);
+\t-webkit-backdrop-filter: blur(var(--we-wb-glass-blur, 0px)) saturate(1.25);
+}
+
+/* The code surface. Glyphs need a stable backdrop, not the wallpaper's own pixels
+   showing between them — this is the "code text contrast" half of the glass look,
+   and it is deliberately MORE opaque than the chrome above. The blur kills the
+   wallpaper's high-frequency detail behind the text, which is what actually makes a
+   busy photograph unreadable even when it is not bright. */
+${scope} .monaco-workbench .part.editor > .content {
+\tbackground-color: rgba(var(--we-wb-editor-rgb), var(--we-wb-editor-alpha, 0)) !important;
+\tbackdrop-filter: blur(var(--we-wb-glass-blur, 0px)) saturate(1.15);
+\t-webkit-backdrop-filter: blur(var(--we-wb-glass-blur, 0px)) saturate(1.15);
 }
 
 /* Editors keep a faint wash so long sessions stay readable over a busy
@@ -759,6 +814,239 @@ export function buildJs(origin: string): string {
   var lastPayload = null;
   /** Still URL currently in the <img>, so a scene's poster is set only once. */
   var lastStill = null;
+  /** Bookkeeping for the readability floor (see wbContrast). */
+  var contrastKey = null;
+  var contrastStats = null;
+  var contrastTimer = 0;
+  /** Preview URL already tried as a fallback source, so it is not retried forever. */
+  var contrastStillTried = null;
+  /** The user's own dimming value, kept apart from the measured floor. */
+  var userScrim = null;
+  /** The user's own code-surface opacity; the measurement may raise it. */
+  var userEditorAlpha = null;
+
+  /* WB-CONTRAST:START — the same math as media/contrast.mjs, which the panel
+     imports. It cannot be imported here: this document's CSP allows scripts from
+     'self' only, and the workbench page is a vscode-file:// document that must not
+     fetch a script from the loopback origin. test/contrast.test.mjs extracts this
+     block and pins it to the module's answers, so the two cannot drift. */
+  function wbLuma(r, g, b) { return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255; }
+
+  function wbStats(data, width, height) {
+    var lumas = [], sum = 0, bright = 0, dark = 0, edges = 0, edgeSamples = 0, i, x, y;
+    if (!data || !data.length) return null;
+    function at(px, py) {
+      var j = (py * width + px) * 4;
+      return wbLuma(data[j], data[j + 1], data[j + 2]);
+    }
+    for (y = 0; y < height; y += 1) {
+      for (x = 0; x < width; x += 1) {
+        i = (y * width + x) * 4;
+        if (data[i + 3] !== undefined && data[i + 3] < 200) continue;
+        var v = wbLuma(data[i], data[i + 1], data[i + 2]);
+        lumas.push(v); sum += v;
+        if (v > 0.6) bright += 1;
+        if (v < 0.25) dark += 1;
+        if (x + 1 < width) { edgeSamples += 1; if (Math.abs(v - at(x + 1, y)) > 0.25) edges += 1; }
+        if (y + 1 < height) { edgeSamples += 1; if (Math.abs(v - at(x, y + 1)) > 0.25) edges += 1; }
+      }
+    }
+    if (!lumas.length) return null;
+    lumas.sort(function (a, b) { return a - b; });
+    function pick(q) { return lumas[Math.min(lumas.length - 1, Math.max(0, Math.round(q * (lumas.length - 1))))]; }
+    function r3(n) { return Math.round(n * 1000) / 1000; }
+    return {
+      samples: lumas.length,
+      mean: r3(sum / lumas.length),
+      p05: r3(pick(0.05)), p50: r3(pick(0.5)), p95: r3(pick(0.95)),
+      bright: r3(bright / lumas.length), dark: r3(dark / lumas.length),
+      busy: edgeSamples ? r3(edges / edgeSamples) : 0
+    };
+  }
+
+  var WB_TARGET = { dark: { balanced: 0.26, strong: 0.16 }, light: { balanced: 0.58, strong: 0.7 } };
+  var WB_CAP = { balanced: 0.75, strong: 0.88 };
+  var WB_BLUR = { balanced: 7, strong: 13 };
+  var WB_BUSY = { balanced: 0.34, strong: 0.24 };
+  /** WCAG targets for the code text: AA, and AAA-ish for the strong mode. */
+  var WB_RATIO = { balanced: 4.5, strong: 7 };
+
+  function wbContrastRatio(a, b) {
+    var hi = Math.max(a, b), lo = Math.min(a, b);
+    return (hi + 0.05) / (lo + 0.05);
+  }
+
+  /** Luminance the code backdrop has to stay under (dark theme) / over (light). */
+  function wbTextBackdropBound(fg, target) {
+    return fg > 0.5 ? (fg + 0.05) / target - 0.05 : target * (fg + 0.05) - 0.05;
+  }
+
+  /** The wallpaper's luma after the dimming (or the wash) is composited over it. */
+  function wbDimmedLuma(stats, scrim, themeKind) {
+    var s = Math.min(1, Math.max(0, Number(scrim) || 0));
+    if (themeKind === 'light') return stats.p05 * (1 - s) + s;
+    return stats.p95 * (1 - s);
+  }
+
+  /**
+   * How opaque the code surface has to be — solved, not guessed:
+   * bg(a) = a*surface + (1-a)*wallpaper, inverted for the readable bound. 0 when the
+   * dimming alone is enough, which is the common case for a dark wallpaper.
+   */
+  function wbEditorAlpha(wallpaperLuma, surfaceLuma, fgLuma, target) {
+    var bound = wbTextBackdropBound(fgLuma, target);
+    var dark = fgLuma > 0.5;
+    if (dark ? wallpaperLuma <= bound : wallpaperLuma >= bound) return 0;
+    if (dark ? wallpaperLuma <= surfaceLuma : wallpaperLuma >= surfaceLuma) return 0;
+    var needed = dark
+      ? (wallpaperLuma - bound) / (wallpaperLuma - surfaceLuma)
+      : (bound - wallpaperLuma) / (surfaceLuma - wallpaperLuma);
+    return Math.min(0.95, Math.max(0, Math.round(needed * 100) / 100));
+  }
+
+  function wbThemeKind() {
+    var cls = (document.body && document.body.className) || '';
+    return /vscode-(light|high-contrast-light)/.test(cls) ? 'light' : 'dark';
+  }
+
+  function wbContrast(stats, themeKind, mode) {
+    if (mode !== 'balanced' && mode !== 'strong') return { scrim: 0, fill: '0,0,0', blur: 0 };
+    if (!stats || !stats.samples) return { scrim: 0, fill: '0,0,0', blur: 0 };
+    var dark = themeKind !== 'light';
+    var target = WB_TARGET[dark ? 'dark' : 'light'][mode];
+    var worst = dark ? stats.p95 : stats.p05;
+    var needed = dark
+      ? 1 - target / Math.max(worst, 0.04)
+      : 1 - (1 - target) / Math.max(1 - worst, 0.04);
+    var scrim = Math.min(WB_CAP[mode], Math.max(0, needed));
+    var blur = stats.busy >= WB_BUSY[mode] ? WB_BLUR[mode] : 0;
+    return { scrim: Math.round(scrim * 100) / 100, fill: dark ? '0,0,0' : '255,255,255', blur: blur };
+  }
+  /* WB-CONTRAST:END */
+
+  /**
+   * Measure what is actually on screen and raise the dimming to what the text needs.
+   *
+   * The wallpaper is an arbitrary photograph behind every glyph in the window, so
+   * this is the only place that can answer "is the UI readable right now?". The
+   * user's slider stays a floor of its own: the effective value is the max of the
+   * two, so a slider can always dim more and never less (weWallpaper.autoContrast
+   * turns the whole mechanism off).
+   */
+  function sampleContrast(source, el) {
+    var size = 64;
+    window.clearTimeout(contrastTimer);
+    contrastTimer = window.setTimeout(function () {
+      try {
+        var canvas = document.createElement('canvas');
+        canvas.width = size; canvas.height = size;
+        var ctx = canvas.getContext('2d', { willReadFrequently: true });
+        if (!ctx || !source) return;
+        var w = source.videoWidth || source.naturalWidth || source.width;
+        var h = source.videoHeight || source.naturalHeight || source.height;
+        if (!w || !h) { contrastKey = null; return; }
+        ctx.drawImage(source, 0, 0, size, size);
+        var stats = wbStats(ctx.getImageData(0, 0, size, size).data, size, size);
+        if (!stats) { contrastKey = null; return; }
+        contrastStats = stats;
+        applyView(lastPayload || {}, el);
+        var floor = wbContrast(stats, wbThemeKind(), contrastMode());
+        var scrim = Math.max(userScrim === null ? 0 : userScrim, floor.scrim);
+        var text = wbTextContrast(stats, floor, scrim);
+        reportContrast(contrastKey, 'p95=' + stats.p95 + ' busy=' + stats.busy + ' scrim=' + scrim
+          + ' editorAlpha=' + (text ? text.alpha : '?'));
+          + (text ? ' 代码文字对比度=' + text.ratio.toFixed(2) + ':1（bg=' + text.bg.toFixed(3) + ' fg=' + text.fg.toFixed(3) + '）' : ''));
+      } catch (e) {
+        // The live layer may be unreadable (an engine canvas whose textures came from
+        // another origin without CORS) or may not have painted yet. Fall back to the
+        // wallpaper's own preview — the same picture the library shows — and only give
+        // up (leaving the user's slider in charge) if that is unreadable too.
+        sampleStillContrast(el);
+      }
+    }, 2500);
+  }
+
+  /** Measure the preview image instead of the live layer (see sampleContrast). */
+  function sampleStillContrast(el) {
+    var url = lastPayload && lastPayload.still;
+    if (!url || contrastStillTried === url) { contrastKey = null; return; }
+    contrastStillTried = url;
+    var image = new Image();
+    try { image.crossOrigin = 'anonymous'; } catch (e) { /* older engines */ }
+    image.onload = function () { sampleContrast(image, el); };
+    image.onerror = function () { contrastKey = null; };
+    image.src = url;
+  }
+
+  function contrastMode() {
+    var m = lastPayload && lastPayload.contrast;
+    return (m === 'off' || m === 'strong' || m === 'balanced') ? m : 'balanced';
+  }
+
+  /** Luma of a CSS colour string (hex or rgb()/rgba()), or null when unreadable. */
+  function wbColorLuma(value) {
+    var s = String(value || '').trim();
+    var m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(s);
+    if (m) {
+      var hex = m[1].length === 3 ? m[1].split('').map(function (c) { return c + c; }).join('') : m[1];
+      return wbLuma(parseInt(hex.slice(0, 2), 16), parseInt(hex.slice(2, 4), 16), parseInt(hex.slice(4, 6), 16));
+    }
+    m = /^rgba?\(([^)]+)\)$/i.exec(s);
+    if (m) {
+      var p = m[1].split(/[\s,\/]+/).filter(function (x) { return x !== ''; });
+      if (p.length >= 3) return wbLuma(parseFloat(p[0]), parseFloat(p[1]), parseFloat(p[2]));
+    }
+    return null;
+  }
+
+  /** Read a VS Code theme variable off the workbench root. */
+  function wbThemeVar(name) {
+    try {
+      var root = document.querySelector('.monaco-workbench');
+      return root ? getComputedStyle(root).getPropertyValue(name) : '';
+    } catch (e) { return ''; }
+  }
+
+  function wbEditorSurfaceLuma() {
+    var v = wbColorLuma(wbThemeVar('--vscode-editor-background'));
+    return v === null ? 0.1 : v;
+  }
+
+  function wbEditorTextLuma() {
+    return wbColorLuma(wbThemeVar('--vscode-editor-foreground'));
+  }
+
+  /** The opacity the code surface needs for the current wallpaper and dimming. */
+  function solveEditorAlpha() {
+    if (!contrastStats) return 0;
+    var mode = contrastMode();
+    if (mode === 'off') return 0;
+    var fg = wbEditorTextLuma();
+    if (fg === null) return 0;
+    var floor = wbContrast(contrastStats, wbThemeKind(), mode);
+    var scrim = Math.max(userScrim === null ? 0 : userScrim, floor.scrim);
+    var wp = wbDimmedLuma(contrastStats, scrim, wbThemeKind());
+    return wbEditorAlpha(wp, wbEditorSurfaceLuma(), fg, WB_RATIO[mode]);
+  }
+
+  /**
+   * What the code text's contrast actually ends up as.
+   *
+   * The compositor owns the glyphs, so the renderer cannot sample its own output —
+   * but it can do the arithmetic: the editor surface alpha blends the theme tone over
+   * the (already dimmed) wallpaper, and the theme hands us the text colour. Reported
+   * to /probe, because "is the code readable?" is otherwise a question only a
+   * screenshot can answer, and screenshots cannot be taken on a locked session.
+   */
+  function wbTextContrast(stats, floor, scrim) {
+    var editorAlpha = Math.max(userEditorAlpha === null ? 0 : userEditorAlpha, solveEditorAlpha());
+    var wpLuma = wbDimmedLuma(stats, scrim, wbThemeKind());
+    var surface = wbEditorSurfaceLuma();
+    var bg = editorAlpha * surface + (1 - editorAlpha) * wpLuma;
+    var fg = wbEditorTextLuma();
+    if (fg === null) return null;
+    return { fg: fg, bg: bg, alpha: editorAlpha, ratio: wbContrastRatio(fg, bg) };
+  }
 
   function setFallback(on) {
     document.documentElement.classList.toggle(FALLBACK_CLASS, !!on);
@@ -882,8 +1170,21 @@ export function buildJs(origin: string): string {
     } catch (e) { /* diagnostics must never break playback */ }
   }
 
-  function sceneHost() {
-    var host = document.getElementById('we-workbench-scene');
+  /**
+   * The readability measurement, in its own /probe slot: the scene report is rewritten
+   * on every poll (already-mounted) and would swallow this line, and this is the number
+   * that answers "is the code readable?" without a screenshot.
+   */
+  function reportContrast(key, extra) {
+    try {
+      var tt = 'absent';
+      try { tt = (typeof trustedTypes !== 'undefined') ? ('present,default=' + (trustedTypes.defaultPolicy ? 'yes' : 'no')) : 'absent'; } catch (e2) {}
+      var body = JSON.stringify({ contrast: { stage: 'measured', key: key, err: extra ? String(extra) : null, tt: tt } });
+      fetch(ORIGIN + '/probe', { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: body })['catch'](function () {});
+    } catch (e) { /* diagnostics must never break playback */ }
+  }
+
+  function sceneHost() {    var host = document.getElementById('we-workbench-scene');
     if (!host) {
       var root = layerRoot();
       if (!root) return null;
@@ -1055,6 +1356,9 @@ export function buildJs(origin: string): string {
         sceneState.instance = instance;
         setMode('scene');
         host.style.visibility = 'visible';
+        // The canvas exists from here on: measure it for the readability floor (a
+        // Scene's preview and its render can differ a lot in brightness).
+        scheduleContrast('scene');
         failures = 0;
         setFallback(false);
         var c = host.querySelector('canvas');
@@ -1103,6 +1407,30 @@ export function buildJs(origin: string): string {
     if (img) img.style.display = mode === 'image' ? 'block' : 'none';
     if (scene) scene.style.display = mode === 'scene' ? 'block' : 'none';
     if (web) web.style.display = mode === 'web' ? 'block' : 'none';
+    scheduleContrast(mode);
+  }
+
+  /**
+   * Sample the layer that is actually on screen, once per wallpaper.
+   *
+   * A live Scene is measured from its own canvas (same-origin, and the engine's
+   * textures come from the loopback server with CORS, so reading it back works). A
+   * live Web wallpaper cannot be read at all — the author page is sandboxed into an
+   * opaque origin — so its PREVIEW stands in: it is the same picture the library
+   * shows, and it is what the fallback would display anyway.
+   */
+  function scheduleContrast(mode) {
+    var root = document.getElementById('we-workbench-wallpaper');
+    var source = mode === 'scene' ? (root && root.querySelector('canvas'))
+      : mode === 'video' ? document.getElementById('we-workbench-video')
+        : document.getElementById('we-workbench-image');
+    if (!source) return;
+    var key = mode + ':' + (lastPayload && lastPayload.url ? lastPayload.url : '?');
+    if (key === contrastKey && contrastStats) return; // same wallpaper, already measured
+    contrastKey = key;
+    contrastStats = null;
+    contrastStillTried = null;
+    sampleContrast(source, active);
   }
 
   // Write the view values straight onto the elements as well as the variables.
@@ -1112,21 +1440,41 @@ export function buildJs(origin: string): string {
   function applyView(payload, el) {
     var opacity = typeof payload.opacity === 'number' ? payload.opacity : null;
     var scrim = typeof payload.scrim === 'number' ? payload.scrim : null;
-    if (opacity === null && scrim === null) return;
+    var blur = typeof payload.blur === 'number' ? payload.blur : null;
+    var chromeAlpha = typeof payload.chromeGlassAlpha === 'number' ? payload.chromeGlassAlpha : null;
+    var editorAlpha = typeof payload.editorGlassAlpha === 'number' ? payload.editorGlassAlpha : null;
+    if (opacity === null && scrim === null && blur === null && chromeAlpha === null && editorAlpha === null && !contrastStats) return;
     var changed = false;
     try {
       if (opacity !== null) {
         if (el && el.style.opacity !== String(opacity)) { el.style.opacity = String(opacity); changed = true; }
         document.documentElement.style.setProperty('--we-wb-opacity', String(opacity));
       }
-      if (scrim !== null) {
-        var scrimEl = document.querySelector('#we-workbench-wallpaper > .we-wb-scrim');
-        if (scrimEl) {
-          var css = 'rgba(0,0,0,' + scrim + ')';
-          if (scrimEl.style.background !== css) { scrimEl.style.background = css; changed = true; }
-        }
-        document.documentElement.style.setProperty('--we-wb-scrim', String(scrim));
+      if (blur !== null) document.documentElement.style.setProperty('--we-wb-glass-blur', blur + 'px');
+      if (chromeAlpha !== null) document.documentElement.style.setProperty('--we-wb-glass-alpha', String(chromeAlpha));
+      // The code surface: the user's slider is a floor, and the measurement can raise
+      // it to whatever the WCAG target needs. Applied from the same place the scrim is,
+      // so a theme change (or a new wallpaper) re-solves both together.
+      if (editorAlpha !== null) userEditorAlpha = editorAlpha;
+      var solved = solveEditorAlpha();
+      var effectiveEditor = Math.max(userEditorAlpha === null ? 0 : userEditorAlpha, solved);
+      document.documentElement.style.setProperty('--we-wb-editor-alpha', String(Math.round(effectiveEditor * 1000) / 1000));
+      if (scrim !== null) userScrim = scrim;
+      // The effective dimming is the stronger of what the user asked for and what
+      // the wallpaper's own brightness says the text needs.
+      var floor = wbContrast(contrastStats, wbThemeKind(), contrastMode());
+      var effective = Math.max(userScrim === null ? 0 : userScrim, floor.scrim);
+      effective = Math.round(effective * 1000) / 1000;
+      var fill = contrastMode() === 'off' ? '0,0,0' : floor.fill;
+      var scrimEl = document.querySelector('#we-workbench-wallpaper > .we-wb-scrim');
+      if (scrimEl) {
+        var css = 'rgba(' + fill + ',' + effective + ')';
+        if (scrimEl.style.background !== css) { scrimEl.style.background = css; changed = true; }
       }
+      document.documentElement.style.setProperty('--we-wb-scrim', String(effective));
+      document.documentElement.style.setProperty('--we-wb-scrim-rgb', fill);
+      document.documentElement.style.setProperty('--we-wb-blur', floor.blur + 'px');
+      document.documentElement.style.setProperty('--we-wb-scale', floor.blur ? '1.04' : '1');
       if (changed) void document.body.offsetHeight;
     } catch (e) { /* cosmetic only */ }
   }
@@ -1239,6 +1587,9 @@ export function buildJs(origin: string): string {
         underlaySampled = true;
         sampleUnderlay(video);
       }
+      // A first frame exists now, so this is the moment the readability floor can be
+      // measured from real pixels (video wallpapers often start on black).
+      scheduleContrast('video');
     });
 
     document.addEventListener('visibilitychange', function () {
@@ -1298,7 +1649,8 @@ export function buildJs(origin: string): string {
       '.monaco-workbench .part.sidebar',
       '.monaco-workbench .part.auxiliarybar',
       '.monaco-workbench .part.panel',
-      '.monaco-workbench .part.editor > .content .editor-group-container > .title',
+      '.monaco-workbench .part.editor > .content',
+    '.monaco-workbench .part.editor > .content .editor-group-container > .title',
       '.monaco-workbench .part.editor > .content .editor-group-container > .title .tabs',
       '.monaco-workbench .part.editor > .content .editor-group-container > .title .tab.active',
       '.monaco-workbench .part.statusbar',

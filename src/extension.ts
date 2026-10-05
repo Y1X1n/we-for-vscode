@@ -258,10 +258,49 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   /** Push the view sliders to the patched pages (no re-patch, no reload). */
   const pushWorkbenchView = (): void => {
+    const cfg = vscode.workspace.getConfiguration('weWallpaper');
     media.setView({
-      opacity: vscode.workspace.getConfiguration('weWallpaper').get<number>('workbenchOpacity', 1),
-      scrim: vscode.workspace.getConfiguration('weWallpaper').get<number>('workbenchScrim', 0.35),
+      opacity: cfg.get<number>('workbenchOpacity', 1),
+      scrim: cfg.get<number>('workbenchScrim', 0.35),
+      contrast: autoContrastMode(),
+      // The chrome/editor glass: one radius for both surfaces, and each alpha raised
+      // to the theme's readability floor — the same constraint the panel's glass
+      // obeys (media/glass.mjs), applied here because the host is what knows the theme.
+      // The radius has a floor of its own: a translucent layer with no blur is not
+      // frosted glass at all, and the user's blur slider is shared with the panel.
+      blur: Math.max(cfg.get<number>('blur', 16), 10),
+      chromeGlassAlpha: glassAlphaFloor(cfg.get<number>('chromeGlassAlpha', 0.45)),
+      editorGlassAlpha: glassAlphaFloor(cfg.get<number>('editorGlassAlpha', 0.72)),
     });
+  };
+
+  /**
+   * Light themes need 0.45, dark ones 0.59 (measured; see media/glass.mjs).
+   *
+   * 0 is passed through as 0 — it means "no glass at all", which has to stay
+   * reachable, otherwise the fully transparent window this extension started as
+   * could never be recovered by the slider. Any positive value is raised to the
+   * floor, because a partly transparent surface that is too transparent to read is
+   * exactly the bug this feature exists to fix.
+   */
+  const glassAlphaFloor = (alpha: number): number => {
+    const value = Number(alpha);
+    if (!Number.isFinite(value) || value <= 0) return 0;
+    const kind = vscode.window.activeColorTheme.kind;
+    const light =
+      kind === vscode.ColorThemeKind.Light || kind === vscode.ColorThemeKind.HighContrastLight;
+    const floor = light ? 0.45 : 0.59;
+    return Math.max(0, Math.min(1, Math.max(value, floor)));
+  };
+
+  /**
+   * How hard the wallpaper has to get out of the text's way. The patched page
+   * measures its own pixels and raises the dimming itself (it owns the wallpaper and
+   * cannot import the panel's module); this only carries the user's choice.
+   */
+  const autoContrastMode = (): 'off' | 'balanced' | 'strong' => {
+    const value = vscode.workspace.getConfiguration('weWallpaper').get<string>('autoContrast', 'balanced');
+    return value === 'off' || value === 'strong' || value === 'balanced' ? value : 'balanced';
   };
 
   const promptReload = async (message: string): Promise<void> => {
@@ -619,7 +658,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       if (!e.affectsConfiguration('weWallpaper')) return;
       if (e.affectsConfiguration('weWallpaper.logLevel')) log.setLevel(readLevel());
       if (e.affectsConfiguration('weWallpaper.autoRotateSeconds')) restartRotation();
-      if (e.affectsConfiguration('weWallpaper.workbenchOpacity') || e.affectsConfiguration('weWallpaper.workbenchScrim')) {
+      if (
+        e.affectsConfiguration('weWallpaper.workbenchOpacity') ||
+        e.affectsConfiguration('weWallpaper.workbenchScrim') ||
+        e.affectsConfiguration('weWallpaper.blur') ||
+        e.affectsConfiguration('weWallpaper.chromeGlassAlpha') ||
+        e.affectsConfiguration('weWallpaper.editorGlassAlpha') ||
+        e.affectsConfiguration('weWallpaper.autoContrast')
+      ) {
         // Sliders go straight to the patched pages on their next poll: no
         // workbench.html rewrite, no reload prompt.
         pushWorkbenchView();
@@ -672,6 +718,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       if (!vscode.workspace.getConfiguration('weWallpaper').get<boolean>('pauseWhenHidden', true)) return;
       WallpaperPanel.instance?.post({ type: 'focus', focused: state.focused });
     }),
+    // The glass alphas are raised to a per-theme readability floor, so a theme switch
+    // has to re-push them (the page would otherwise keep the old theme's floor).
+    vscode.window.onDidChangeActiveColorTheme(() => pushWorkbenchView()),
   );
 
   restartRotation();

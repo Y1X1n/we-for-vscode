@@ -41,6 +41,11 @@ export interface GlassSettings {
   glassAlpha: number;
   glassColor: string;
   panelWidth: number;
+  /** Frosted chrome / editor surface alphas (see weWallpaper.chromeGlassAlpha). */
+  chromeGlassAlpha: number;
+  editorGlassAlpha: number;
+  /** Readability policy: the panel measures its own wallpaper and raises the dimming. */
+  autoContrast: 'off' | 'balanced' | 'strong';
 }
 
 export class WallpaperPanel {
@@ -170,6 +175,12 @@ export class WallpaperPanel {
       glassAlpha: c.get<number>('glassAlpha', 0.45),
       glassColor: c.get<string>('glassColor', '#101014'),
       panelWidth: c.get<number>('panelWidth', 420),
+      chromeGlassAlpha: c.get<number>('chromeGlassAlpha', 0.45),
+      editorGlassAlpha: c.get<number>('editorGlassAlpha', 0.72),
+      autoContrast: (() => {
+        const v = c.get<string>('autoContrast', 'balanced');
+        return v === 'off' || v === 'strong' ? v : 'balanced';
+      })(),
     };
   }
 
