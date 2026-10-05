@@ -1,8 +1,8 @@
 {
   "name": "we-for-vscode",
   "displayName": "Wallpaper Engine for VS Code",
-  "description": "Live Wallpaper Engine wallpapers inside VS Code — video, Scene and Web wallpapers behind the whole window, with iOS-style liquid glass and automatic text readability. Unofficial; reads your locally installed Wallpaper Engine library.",
-  "version": "0.1.11",
+  "description": "Your real Wallpaper Engine library inside VS Code: video, Scene and Web wallpapers rendered live behind the whole window, with frosted glass and code text that stays readable (WCAG 4.5:1). Unofficial.",
+  "version": "0.1.12",
   "publisher": "y1x1n",
   "license": "MIT",
   "repository": {
