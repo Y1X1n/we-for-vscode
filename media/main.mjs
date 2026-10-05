@@ -1,0 +1,549 @@
+/**
+ * Webview entry point.
+ *
+ * Talks to the extension host over postMessage:
+ *   host → webview: init / settings / inventory / item / visibility / library
+ *   webview → host: ready / select / next / setting / log
+ *
+ * State survives the webview being hidden and rebuilt (the panel is created with
+ * retainContextWhenHidden:false, so the document is destroyed when the tab goes
+ * to the background) via the vscode.setState/getState round trip. Per-item
+ * playback flags are deliberately NOT restored — they describe a <video> element
+ * that no longer exists.
+ *
+ * Layer visibility is not decided here: it comes from render-state.mjs, which is
+ * unit-tested (`test/render-state.test.mjs`). Do not reintroduce ad-hoc
+ * `poster.hidden = ...` logic in this file.
+ */
+
+import { buildGlassVars, clamp, LIMITS, renderModeLabel, themeKindFromClassList } from './glass.mjs';
+import { computeLayerState, playButtonLabel } from './render-state.mjs';
+import { isLive, mountWallpaper } from './renderer.mjs';
+
+const vscode = acquireVsCodeApi();
+
+const el = {
+  video: document.getElementById('wp-video'),
+  live: document.getElementById('wp-live'),
+  poster: document.getElementById('wp-poster'),
+  stage: document.getElementById('stage'),
+  title: document.getElementById('wp-title'),
+  meta: document.getElementById('wp-meta'),
+  badge: document.getElementById('wp-badge'),
+  note: document.getElementById('wp-note'),
+  source: document.getElementById('wp-source'),
+  play: document.getElementById('btn-play'),
+  pick: document.getElementById('btn-pick'),
+  next: document.getElementById('btn-next'),
+  library: document.getElementById('library'),
+  libList: document.getElementById('lib-list'),
+  libSearch: document.getElementById('lib-search'),
+  libEmpty: document.getElementById('lib-empty'),
+  libClose: document.getElementById('btn-lib-close'),
+  controls: document.querySelector('.we-controls'),
+};
+
+/**
+ * Loopback origin of the media server, read from `<body data-media-origin>` (the host
+ * only substitutes placeholders in index.html — this file is an external module).
+ * Needed to build the renderer URL: `item.media` already carries the origin, but the
+ * renderer also wants the `/wallpaper-engine/scene-files` base for a scene's relative
+ * textures/materials (upstream passes the same pair).
+ */
+const MEDIA_ORIGIN = document.body.dataset.mediaOrigin || '';
+
+const SLIDERS = [
+  ['blur', 'in-blur', 'out-blur'],
+  ['glassAlpha', 'in-glassAlpha', 'out-glassAlpha'],
+  ['scrim', 'in-scrim', 'out-scrim'],
+  ['wallpaperOpacity', 'in-wallpaperOpacity', 'out-wallpaperOpacity'],
+  ['border', 'in-border', 'out-border'],
+  ['panelWidth', 'in-panelWidth', 'out-panelWidth'],
+  ['saturate', 'in-saturate', 'out-saturate'],
+];
+
+const state = Object.assign(
+  {
+    settings: { blur: 16, saturate: 1.3, wallpaperOpacity: 1, scrim: 0.35, border: 1, glassAlpha: 0.45, glassColor: '#101014', panelWidth: 420 },
+    item: null,
+    paused: false,
+    visible: true,
+    focused: true,
+    inventory: null,
+  },
+  vscode.getState() || {},
+);
+
+// Per-item flags always start clean: a restored `hasPaintedFrame` would suppress
+// the placeholder for a video that has not decoded anything yet.
+state.hasPaintedFrame = false;
+state.videoFailed = false;
+/** The scene renderer reported a frame (never restored — the iframe is gone). */
+state.sceneReady = false;
+/** A frame the renderer captured itself, used as the poster once it exists. */
+state.sceneShot = null;
+/** Media URL currently attached to the <video> element (null = nothing attached). */
+let attachedMedia = null;
+
+function persist() {
+  vscode.setState({
+    settings: state.settings,
+    item: state.item,
+    paused: state.paused,
+  });
+}
+
+function log(level, message) {
+  vscode.postMessage({ type: 'log', level, message });
+}
+
+// ── glass ───────────────────────────────────────────────────────────────────
+
+function applyGlass() {
+  const themeKind = themeKindFromClassList(document.body.classList);
+  const vars = buildGlassVars(state.settings, themeKind);
+  for (const [k, v] of Object.entries(vars)) document.documentElement.style.setProperty(k, v);
+}
+
+function syncInputs() {
+  for (const [key, inputId, outId] of SLIDERS) {
+    const input = document.getElementById(inputId);
+    const out = document.getElementById(outId);
+    if (!input) continue;
+    input.value = String(state.settings[key]);
+    if (out) out.textContent = key === 'panelWidth' ? `${Math.round(state.settings[key])}px` : String(Number(state.settings[key]).toFixed(2));
+  }
+  const color = document.getElementById('in-glassColor');
+  if (color) color.value = state.settings.glassColor;
+}
+
+// ── the <video> element ─────────────────────────────────────────────────────
+
+function attachVideo(item) {
+  if (attachedMedia === item.media) return;
+  attachedMedia = item.media;
+  state.hasPaintedFrame = false;
+  state.videoFailed = false;
+  el.video.hidden = false;
+  el.video.setAttribute('src', item.media);
+  // No `poster` attribute on purpose: Chromium keeps showing it under conditions
+  // we do not control, and the <img> placeholder behind the video already covers
+  // the pre-first-frame case deterministically.
+}
+
+function detachVideo() {
+  if (attachedMedia === null) return;
+  attachedMedia = null;
+  el.video.pause();
+  el.video.removeAttribute('src');
+  el.video.load();
+  el.video.hidden = true;
+}
+
+// ── the live layer (Scene / Web, via the vendored webwallgl library) ────────
+
+/** Mounted SceneInstance for the current wallpaper (null = nothing mounted). */
+let liveInstance = null;
+/** What is mounted, so re-picking the same wallpaper does not remount it. */
+let attachedLive = null;
+
+/**
+ * Mount or swap the live wallpaper.
+ *
+ * The engine is imported directly (same origin, MIT — see media/renderer.mjs), so
+ * there is no iframe and no bridge: we hold the instance and its canvas. The old
+ * arrangement needed a cross-origin iframe plus an injected postMessage bridge because
+ * `contentWindow.__wp` is unreachable across origins; none of that is needed now.
+ */
+async function attachLive(item) {
+  const key = `${item.renderMode}:${item.media}`;
+  if (attachedLive === key) return;
+  detachLive();
+  attachedLive = key;
+  el.live.hidden = false;
+  log('info', `实时挂载开始：${item.renderMode} ${item.media ?? '(无载荷)'}`);
+  try {
+    liveInstance = await mountWallpaper(el.live, item, {
+      fps: 30,
+      // The engine's own reporting (silent-failure one-shots, WebGL context loss,
+      // watchdog). Without this, a dead render loop is indistinguishable from
+      // "still loading" — the exact shape of the invisible-scene bug report.
+      onDiagnostic: (msg, level) => log(level === 'error' ? 'error' : level === 'warn' ? 'warn' : 'info', `[引擎] ${msg}`),
+      onError: (err) => log('error', `[引擎] ${err && err.message ? err.message : String(err)}`),
+    });
+    log(
+      'info',
+      `实时挂载成功：canvas=${liveInstance && liveInstance.canvas ? `${liveInstance.canvas.width}x${liveInstance.canvas.height}` : 'n/a'}`,
+    );
+    // mount() resolves after the first frame is actually painted (upstream contract),
+    // which is the readiness the layer state machine has been waiting for — drop the
+    // placeholder at the earliest moment it is safe, not on a timer.
+    state.sceneReady = true;
+    applyLayerState();
+    // Keep one frame the renderer drew as the poster for the next mount (scene only:
+    // a web wallpaper's `canvas` is the container div, there is nothing to grab).
+    window.setTimeout(captureLiveFrame, 2500);
+  } catch (err) {
+    attachedLive = null;
+    el.live.hidden = true;
+    const message = String(err && err.message ? err.message : err);
+    log('error', `实时渲染失败（${item.renderMode}）：${message}`);
+    el.badge.textContent = '实时渲染失败（见输出通道）';
+    // No applyLayerState() here: the item is still live, so it would remount and
+    // loop. The placeholder from the last applyLayerState() stays on screen — that
+    // IS the graceful degradation.
+  }
+}
+
+/** One frame from the mounted instance, kept as the poster. */
+function captureLiveFrame() {
+  try {
+    const canvas = liveInstance && liveInstance.canvas;
+    if (!(canvas instanceof HTMLCanvasElement) || !canvas.width) return;
+    const shot = canvas.toDataURL('image/jpeg', 0.85);
+    if (typeof shot === 'string' && shot.startsWith('data:image/')) {
+      state.sceneShot = shot;
+      state.sceneReady = true;
+      applyLayerState();
+    }
+  } catch (err) {
+    log('info', `抓帧失败：${String(err)}`);
+  }
+}
+
+function detachLive() {
+  if (!attachedLive) return;
+  attachedLive = null;
+  state.sceneReady = false;
+  if (liveInstance) {
+    try {
+      liveInstance.pause();
+    } catch {
+      /* the instance may already be gone */
+    }
+    liveInstance = null;
+  }
+  // The library exposes no destroy(): pausing the loop and dropping the canvas is what
+  // releases the WebGL context.
+  try {
+    el.live.replaceChildren();
+  } catch {
+    /* ignore */
+  }
+  el.live.hidden = true;
+}
+
+function markPainted() {
+  if (state.hasPaintedFrame) return;
+  state.hasPaintedFrame = true;
+  applyLayerState();
+}
+
+el.video.addEventListener('loadeddata', markPainted);
+el.video.addEventListener('playing', markPainted);
+el.video.addEventListener('error', () => {
+  const err = el.video.error;
+  state.videoFailed = true;
+  log('error', `视频加载失败 code=${err ? err.code : '?'} ${err && err.message ? err.message : ''}`);
+  el.badge.textContent = '视频加载失败（见输出通道）';
+  applyLayerState();
+});
+
+// ── rendering ───────────────────────────────────────────────────────────────
+
+function applyLayerState() {
+  const layer = computeLayerState(state);
+
+  // Poster layer: behind the live layer, placeholder only. For a Scene it upgrades to
+  // the frame the renderer captured itself (see the message handler).
+  const posterSrc = state.sceneShot && state.item?.renderMode === 'scene' ? state.sceneShot : state.item?.preview;
+  if (layer.showPoster && posterSrc) {
+    if (el.poster.getAttribute('src') !== posterSrc) el.poster.setAttribute('src', posterSrc);
+    el.poster.hidden = false;
+  } else {
+    el.poster.hidden = true;
+  }
+
+  // Video layer.
+  if (layer.showVideo && state.item?.media) {
+    attachVideo(state.item);
+    el.video.hidden = false;
+    if (layer.shouldPlay) {
+      el.video.play().catch((err) => log('info', `play() 被拒绝：${String(err)}`));
+    } else {
+      el.video.pause();
+    }
+  } else {
+    detachVideo();
+  }
+
+  // Scene layer (WebWallGL iframe). Only one live layer exists at a time.
+  if (layer.showScene && isLive(state.item)) {
+    void attachLive(state.item);
+    // Occlusion pause: the instance is ours, so this is a direct call.
+    if (liveInstance) {
+      try {
+        if (layer.shouldPlay) liveInstance.resume();
+        else liveInstance.pause();
+      } catch (err) {
+        log('info', `暂停/恢复失败：${String(err)}`);
+      }
+    }
+  } else {
+    detachLive();
+  }
+
+  if (el.stage) el.stage.dataset.mode = state.item ? state.item.renderMode : 'none';
+  if (el.play) el.play.textContent = playButtonLabel(layer);
+  if (el.play) el.play.dataset.reason = layer.reason;
+
+  // The badge would otherwise be overwritten by the render-mode label after an error.
+  if (state.item && !state.videoFailed) el.badge.textContent = renderModeLabel(state.item);
+}
+
+function renderMeta() {
+  const item = state.item;
+  if (!item) {
+    el.title.textContent = 'Wallpaper Engine';
+    el.meta.textContent = state.inventory
+      ? `壁纸库 ${state.inventory.items?.length ?? '?'} 张`
+      : '正在扫描本地壁纸库…';
+    el.badge.textContent = '空';
+    el.note.hidden = true;
+    el.source.textContent = '';
+    return;
+  }
+  el.title.textContent = item.title;
+  const rating = item.contentrating ? ` · 分级 ${item.contentrating}` : '';
+  const sourceLabel = item.source === 'workshop' ? '创意工坊' : item.source === 'myprojects' ? '我的项目' : '官方默认';
+  el.meta.textContent = `${item.type}${rating} · ${sourceLabel}`;
+  el.badge.textContent = renderModeLabel(item);
+  el.note.hidden = !item.note;
+  el.note.textContent = item.note || '';
+  el.source.textContent = item.id;
+}
+
+function setItem(item) {
+  // Only re-arm the first-frame flags when the media actually changes: re-picking
+  // the wallpaper that is already playing would otherwise leave the placeholder
+  // "shown" behind the video for good (visible as ghosting at opacity < 1).
+  const mediaChanged = (state.item?.media ?? null) !== (item?.media ?? null);
+  state.item = item || null;
+  if (mediaChanged) {
+    state.hasPaintedFrame = false;
+    state.videoFailed = false;
+    state.sceneReady = false;
+    state.sceneShot = null;
+  }
+  renderMeta();
+  applyLayerState();
+  persist();
+}
+
+// ── the wallpaper library (in-panel selection) ──────────────────────────────
+//
+// The library lives INSIDE this panel. It used to be a `showQuickPick` at the top of
+// the window, which meant choosing a wallpaper took the user's eyes (and the keyboard)
+// out of the view they were looking at — and the picker could not show a single
+// thumbnail. The inventory snapshot has carried every item (with its preview URL) all
+// along, so the list is built locally: no round trip to open it, and clicking a row
+// posts one `select` message.
+//
+// Rows are built with createElement/textContent, never innerHTML: item titles and
+// notes come from third-party project.json files.
+
+let libraryOpen = false;
+
+function setLibraryOpen(open) {
+  libraryOpen = !!open;
+  if (el.library) el.library.hidden = !libraryOpen;
+  if (el.controls) el.controls.hidden = libraryOpen;
+  if (el.pick) el.pick.textContent = libraryOpen ? '返回设置' : '选择壁纸…';
+  if (libraryOpen) {
+    renderLibrary();
+    el.libSearch?.focus();
+  }
+}
+
+function libraryMatches(item, query) {
+  if (!query) return true;
+  const hay = `${item.title || ''} ${item.id || ''} ${item.type || ''} ${item.renderMode || ''}`.toLowerCase();
+  return hay.includes(query);
+}
+
+function libraryRow(item, selected) {
+  const row = document.createElement('button');
+  row.type = 'button';
+  row.className = 'we-lib-item';
+  row.dataset.id = item.id;
+  row.setAttribute('role', 'option');
+  row.setAttribute('aria-selected', selected ? 'true' : 'false');
+  if (item.note) row.title = item.note;
+
+  const thumb = document.createElement('span');
+  thumb.className = 'we-lib-thumb';
+  // The project's own scheme colour paints the tile until (or instead of) the preview:
+  // previews are 256px GIFs, and a list of 30 of them is worth loading lazily.
+  if (item.schemeColor) thumb.style.background = item.schemeColor;
+  if (item.preview) {
+    const img = document.createElement('img');
+    img.loading = 'lazy';
+    img.decoding = 'async';
+    img.alt = '';
+    img.src = item.preview;
+    thumb.appendChild(img);
+  }
+
+  const text = document.createElement('span');
+  text.className = 'we-lib-text';
+  const name = document.createElement('span');
+  name.className = 'we-lib-name';
+  name.textContent = item.title || item.id;
+  const meta = document.createElement('span');
+  meta.className = 'we-lib-meta';
+  const playable = item.renderMode === 'video' || item.renderMode === 'scene' || item.renderMode === 'web';
+  meta.textContent = `${playable ? renderModeLabel(item) : `${item.type} · 仅预览`}${item.contentrating ? ` · ${item.contentrating}` : ''}`;
+  text.append(name, meta);
+
+  row.append(thumb, text);
+  if (!playable) row.classList.add('we-lib-item--inert');
+  if (selected) row.classList.add('we-lib-item--current');
+  row.addEventListener('click', () => {
+    vscode.postMessage({ type: 'select', id: item.id });
+    // Optimistic marker: the host's `item` push confirms it a moment later.
+    markCurrentLibraryRow(item.id);
+    renderMeta();
+  });
+  return row;
+}
+
+/** Move the "current" marker without rebuilding the list (keeps scroll + focus). */
+function markCurrentLibraryRow(id) {
+  if (!el.libList) return;
+  for (const row of el.libList.querySelectorAll('.we-lib-item')) {
+    const on = row.dataset.id === id;
+    row.classList.toggle('we-lib-item--current', on);
+    row.setAttribute('aria-selected', on ? 'true' : 'false');
+  }
+}
+
+function renderLibrary() {
+  if (!el.libList) return;
+  const items = state.inventory?.items || [];
+  const query = (el.libSearch?.value || '').trim().toLowerCase();
+  const shown = items.filter((i) => libraryMatches(i, query));
+  el.libList.replaceChildren(...shown.map((i) => libraryRow(i, i.id === state.item?.id)));
+  if (el.libEmpty) {
+    el.libEmpty.hidden = shown.length > 0;
+    el.libEmpty.textContent = !items.length
+      ? '正在扫描本地壁纸库…'
+      : `没有匹配「${el.libSearch?.value || ''}」的壁纸`;
+  }
+}
+
+el.pick?.addEventListener('click', () => setLibraryOpen(!libraryOpen));
+el.libClose?.addEventListener('click', () => setLibraryOpen(false));
+el.libSearch?.addEventListener('input', () => renderLibrary());
+
+// ── controls ────────────────────────────────────────────────────────────────
+
+let settingTimer = null;
+function pushSetting(key, value) {
+  clearTimeout(settingTimer);
+  settingTimer = setTimeout(() => {
+    vscode.postMessage({ type: 'setting', key, value });
+    persist();
+  }, 150);
+}
+
+for (const [key, inputId] of SLIDERS) {
+  const input = document.getElementById(inputId);
+  if (!input) continue;
+  input.addEventListener('input', () => {
+    const raw = Number(input.value);
+    state.settings[key] = key === 'border' || key === 'blur' || key === 'panelWidth' ? Math.round(raw) : clamp(raw, ...LIMITS[key]);
+    applyGlass();
+    syncInputs();
+    pushSetting(key, state.settings[key]);
+  });
+}
+
+document.getElementById('in-glassColor')?.addEventListener('input', (e) => {
+  state.settings.glassColor = e.target.value;
+  applyGlass();
+  pushSetting('glassColor', state.settings.glassColor);
+});
+
+el.play?.addEventListener('click', () => {
+  state.paused = !state.paused;
+  applyLayerState();
+  persist();
+});
+
+el.next?.addEventListener('click', () => vscode.postMessage({ type: 'next' }));
+
+// ── host messages ───────────────────────────────────────────────────────────
+
+window.addEventListener('message', (event) => {
+  const msg = event.data || {};
+  switch (msg.type) {
+    case 'init':
+      if (msg.settings) state.settings = { ...state.settings, ...msg.settings };
+      applyGlass();
+      syncInputs();
+      break;
+    case 'settings':
+      state.settings = { ...state.settings, ...(msg.settings || {}) };
+      applyGlass();
+      syncInputs();
+      break;
+    case 'inventory':
+      state.inventory = msg.snapshot || null;
+      if (!state.item) renderMeta();
+      // Keep an open library in step: the first scan often lands while it is open.
+      if (libraryOpen) renderLibrary();
+      break;
+    case 'item':
+      setItem(msg.item || null);
+      if (libraryOpen) markCurrentLibraryRow(state.item?.id);
+      break;
+    case 'library':
+      setLibraryOpen(!!msg.open);
+      break;
+    case 'visibility':
+      state.visible = !!msg.visible;
+      applyLayerState();
+      break;
+    case 'focus':
+      state.focused = !!msg.focused;
+      applyLayerState();
+      break;
+    default:
+      log('warn', `未知消息 ${JSON.stringify(msg)}`);
+  }
+});
+
+// Theme switches (light/dark) move the readability floor — recompute.
+new MutationObserver(applyGlass).observe(document.body, { attributes: true, attributeFilter: ['class'] });
+
+// Self-report (info level): the one lifecycle the host cannot see. If the panel
+// shows nothing but the log is silent, these lines say which layer broke —
+// webview dead (no reports at all), item never pushed (item=null), mount hung
+// (children=0), or a mounted canvas that renders nothing visible.
+window.setInterval(() => {
+  const canvas = el.live ? el.live.querySelector('canvas') : null;
+  log(
+    'info',
+    `面板状态: item=${state.item ? state.item.id : 'null'} mode=${state.item ? state.item.renderMode : '-'} ` +
+      `badge=${el.badge.textContent} liveHidden=${el.live ? el.live.hidden : '?'} ` +
+      `children=${el.live ? el.live.childElementCount : '?'} ` +
+      `canvas=${canvas ? `${canvas.width}x${canvas.height} css ${canvas.clientWidth}x${canvas.clientHeight}` : 'none'} ` +
+      `poster=${el.poster && el.poster.hidden ? 'hidden' : 'shown'}`,
+  );
+}, 5000);
+
+applyGlass();
+syncInputs();
+renderMeta();
+applyLayerState();
+vscode.postMessage({ type: 'ready' });

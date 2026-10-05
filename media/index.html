@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="%CSP%" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Wallpaper Engine</title>
+    <link rel="stylesheet" href="%STYLE_URI%" />
+  </head>
+  <!-- data-media-origin carries the loopback origin into the webview: main.mjs is an
+       external module (the host substitutes tokens only in THIS file), so the value
+       has to travel as an attribute rather than inside the script. -->
+  <body data-media-origin="%MEDIA_ORIGIN%">
+    <!-- Wallpaper stage: the media layers sit behind everything else.
+         Upstream uses z-index -2/-1 on document.body children; inside a webview
+         we own the document, so plain 0-based layering with an overlay works. -->
+    <div id="stage">
+      <video id="wp-video" class="we-media" playsinline loop muted autoplay hidden></video>
+      <!-- Live layer: the vendored webwallgl library mounts its canvas here (same
+           origin — the engine is an npm dependency now, not a page served from the
+           loopback origin inside an iframe). -->
+      <div id="wp-live" hidden></div>
+      <img id="wp-poster" class="we-media we-poster" alt="" hidden />
+      <div id="scrim" class="we-scrim"></div>
+    </div>
+
+    <section id="glass" class="we-glass" aria-label="壁纸控制面板">
+      <header class="we-head">
+        <div class="we-headline">
+          <h1 id="wp-title">Wallpaper Engine</h1>
+          <p id="wp-meta" class="we-meta">正在扫描本地壁纸库…</p>
+        </div>
+        <span id="wp-badge" class="we-badge">初始化</span>
+      </header>
+
+      <p id="wp-note" class="we-note" hidden></p>
+
+      <!-- Wallpaper library: selection happens HERE, inside this panel — not in a
+           QuickPick at the top of the window. main.mjs builds the rows from the
+           inventory snapshot the host pushes (it already carried it for the count in
+           the meta line), so opening the library costs no round trip; clicking a row
+           posts `select` and the host swaps the wallpaper, which is visible
+           immediately behind the glass. -->
+      <section id="library" class="we-library" hidden aria-label="壁纸库">
+        <div class="we-library-bar">
+          <input
+            id="lib-search"
+            class="we-search"
+            type="search"
+            placeholder="按名称 / 类型筛选…"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <button id="btn-lib-close" type="button" class="we-btn we-btn--compact">返回设置</button>
+        </div>
+        <ul id="lib-list" class="we-lib-list"></ul>
+        <p id="lib-empty" class="we-lib-empty">正在扫描本地壁纸库…</p>
+      </section>
+
+      <div class="we-actions">
+        <button id="btn-play" type="button" class="we-btn" title="播放 / 暂停">暂停</button>
+        <button id="btn-pick" type="button" class="we-btn we-btn--primary">选择壁纸…</button>
+        <button id="btn-next" type="button" class="we-btn">下一张</button>
+      </div>
+
+      <div class="we-controls">
+        <label class="we-field">
+          <span>玻璃模糊 <output id="out-blur"></output></span>
+          <input id="in-blur" type="range" min="0" max="60" step="1" />
+        </label>
+        <label class="we-field">
+          <span>玻璃底色不透明度 <output id="out-glassAlpha"></output></span>
+          <input id="in-glassAlpha" type="range" min="0" max="1" step="0.01" />
+        </label>
+        <label class="we-field">
+          <span>暗化层 <output id="out-scrim"></output></span>
+          <input id="in-scrim" type="range" min="0" max="1" step="0.01" />
+        </label>
+        <label class="we-field">
+          <span>壁纸不透明度 <output id="out-wallpaperOpacity"></output></span>
+          <input id="in-wallpaperOpacity" type="range" min="0.05" max="1" step="0.01" />
+        </label>
+        <label class="we-field">
+          <span>边框 <output id="out-border"></output></span>
+          <input id="in-border" type="range" min="0" max="8" step="1" />
+        </label>
+        <label class="we-field">
+          <span>面板宽度 <output id="out-panelWidth"></output></span>
+          <input id="in-panelWidth" type="range" min="240" max="900" step="10" />
+        </label>
+        <label class="we-field we-field--color">
+          <span>玻璃颜色</span>
+          <input id="in-glassColor" type="color" />
+        </label>
+        <label class="we-field">
+          <span>背景饱和度 <output id="out-saturate"></output></span>
+          <input id="in-saturate" type="range" min="0" max="3" step="0.1" />
+        </label>
+      </div>
+
+      <footer class="we-foot">
+        <span id="wp-source"></span>
+        <span class="we-hint">Ctrl+Alt+W 打开视图 · 幻灯片在设置里（weWallpaper.autoRotateSeconds）</span>
+      </footer>    </section>
+
+    <script type="module" src="%SCRIPT_URI%"></script>
+  </body>
+</html>

@@ -1,0 +1,10 @@
+{
+  "name": "webwallgl",
+  "version": "2.1.0",
+  "license": "MIT",
+  "source": "https://registry.npmjs.org/webwallgl/-/webwallgl-2.1.0.tgz",
+  "repository": "https://github.com/oneincase/webwallgl",
+  "vendoredBy": "we-for-vscode",
+  "why": "Scene/Web 实时渲染引擎。上游仓库 oneincase/webwallgl 未附 LICENSE，但 npm 发布的包带 MIT LICENSE，因此改为正规依赖该包（而不是读取用户自备的构建页）。2.1.0：静默失败接一次性诊断、mount 首帧看门狗（mountTimeoutMs）、WebGL 上下文丢失可见事件、松散目录（源码工程）形态、applyUserProperties 字母序（corsair_collection 白屏）等修复。",
+  "files": ["webwallgl.min.mjs", "webwallgl.d.ts", "LICENSE"]
+}

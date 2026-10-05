@@ -1,0 +1,23 @@
+# Build output — `npm run verify` regenerates it from src/.
+out/
+
+# Dependencies.
+node_modules/
+
+# Packaged extension (published as a GitHub release asset instead).
+*.vsix
+
+# Local-only reference material: upstream clones and vendor UI dumps used while
+# reverse-engineering the workbench, never part of the extension.
+_ref/
+_repo2/
+
+# Scratch: one-off debugging harnesses, captured frames and screenshots. The two
+# replica harnesses worth keeping live in tools/.
+_scratch/
+logs/
+*.log
+
+# Test cache / temp.
+.test-cache/
+*.damaged-bak

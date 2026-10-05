@@ -1,0 +1,8 @@
+# Keep line endings stable for everyone: the patch writes byte-exact files and the
+# tests compare bytes, so a CRLF/LF flip across platforms is noise at best.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.gif binary
+*.vsix binary

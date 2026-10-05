@@ -1,0 +1,12 @@
+.vscode/**
+src/**
+test/**
+node_modules/**
+out/**/*.map
+_repo2/**
+_ref/**
+_scratch/**
+**/*.ts
+tsconfig.json
+package-lock.json
+*.vsix

@@ -1,0 +1,392 @@
+/*
+ * Wallpaper view styling.
+ *
+ * The glass recipe is the same one shipped upstream (MIT, elysia395
+ * `src/styles.js`): backdrop-filter blur + saturate + brightness + contrast.
+ * Two upstream contingencies are kept because they are real browser behaviour:
+ *  1. `backdrop-filter` makes the element a containing block for fixed
+ *     descendants — if a fixed-position child is ever added here, move the
+ *     filter to a ::before layer instead of putting it on the container.
+ *  2. Software rasterisers silently ignore backdrop-filter; upstream detects
+ *     that and falls back to a more opaque panel. Here the scrim + glass alpha
+ *     keep text readable even when the filter is a no-op, and #glass carries a
+ *     solid base colour underneath the translucent one.
+ *
+ * Text colours come from the webview's inherited --vscode-* variables so the
+ * panel follows the editor theme instead of fighting it.
+ */
+
+:root {
+  --we-blur: 16px;
+  --we-saturate: 1.3;
+  --we-wallpaper-opacity: 1;
+  --we-scrim: 0.35;
+  --we-border: 1px;
+  --we-glass-alpha: 0.45;
+  --we-glass-rgb: 16 16 20;
+  --we-panel-width: 420px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: #000;
+  color: var(--vscode-foreground, #ddd);
+  font-family: var(--vscode-font-family, system-ui, sans-serif);
+  overflow: hidden;
+}
+
+#stage {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  background: #000;
+}
+
+/*
+ * Layer order inside #stage is load-bearing, not cosmetic:
+ *   0  #wp-poster  preview still — a pre-first-frame PLACEHOLDER, never an overlay
+ *   1  #wp-video   the live wallpaper (Video)
+ *   1  #wp-scene   the WebWallGL renderer iframe (Scene)
+ *   2  .we-scrim   dimming on top of both
+ * The preview used to follow the video in DOM order, so it painted on top; for
+ * wallpapers whose preview is an animated GIF that read as "the first frame is
+ * stuck". Keep the poster behind the live layer and let render-state.mjs hide it.
+ */
+.we-media {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: var(--we-wallpaper-opacity);
+}
+
+#wp-poster {
+  z-index: 0;
+}
+
+#wp-video {
+  z-index: 1;
+}
+
+/*
+ * The live layer (Scene / Web) is a plain div the vendored engine mounts its canvas
+ * into — same origin, so there is no iframe and no cross-origin caveat. Full bleed;
+ * the poster stays visible until the first captured frame (see render-state.mjs).
+ */
+#wp-live {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  opacity: var(--we-wallpaper-opacity);
+}
+
+#wp-live > canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
+#wp-live[hidden] {
+  display: none;
+}
+
+.we-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  background: #000;
+  opacity: var(--we-scrim);
+  pointer-events: none;
+}
+
+.we-glass {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 10;
+  width: min(var(--we-panel-width), calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+  padding: 18px 18px 14px;
+  border-radius: 18px;
+  border: var(--we-border) solid rgba(255, 255, 255, 0.18);
+  background: rgb(var(--we-glass-rgb) / var(--we-glass-alpha));
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(var(--we-blur)) saturate(var(--we-saturate)) brightness(1.04) contrast(1.01);
+  -webkit-backdrop-filter: blur(var(--we-blur)) saturate(var(--we-saturate)) brightness(1.04) contrast(1.01);
+}
+
+.we-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.we-headline h1 {
+  margin: 0 0 4px;
+  font-size: 1.05rem;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.we-meta {
+  margin: 0;
+  font-size: 0.78rem;
+  opacity: 0.75;
+  word-break: break-all;
+}
+
+.we-badge {
+  flex: none;
+  font-size: 0.7rem;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  white-space: nowrap;
+}
+
+.we-note {
+  margin: 10px 0 0;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(255, 200, 0, 0.12);
+  border: 1px solid rgba(255, 200, 0, 0.28);
+}
+
+.we-actions {
+  display: flex;
+  gap: 8px;
+  margin: 14px 0 12px;
+}
+
+.we-btn {
+  flex: 1;
+  padding: 7px 10px;
+  font: inherit;
+  font-size: 0.78rem;
+  color: var(--vscode-button-secondaryForeground, #eee);
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.we-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.we-btn--primary {
+  color: var(--vscode-button-foreground, #fff);
+  background: var(--vscode-button-background, #0e639c);
+  border-color: transparent;
+}
+
+.we-btn--primary:hover {
+  background: var(--vscode-button-hoverBackground, #1177bb);
+}
+
+.we-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* The library replaces the sliders while it is open. `hidden` MUST be restated here:
+   the UA rule `[hidden] { display: none }` loses to the author `display: flex` above,
+   so without this line the controls would stay on screen behind the list. */
+.we-controls[hidden] {
+  display: none;
+}
+
+/* ── the in-panel wallpaper library ─────────────────────────────────────────
+   Selection happens in here rather than in a QuickPick over the window's top bar.
+   The list scrolls inside the glass panel and keeps the current wallpaper marked, so
+   clicking through the library shows each wallpaper immediately behind the panel. */
+
+.we-library {
+  margin: 14px 0 0;
+}
+
+.we-library[hidden] {
+  display: none;
+}
+
+.we-library-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.we-search {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 10px;
+  font: inherit;
+  font-size: 0.78rem;
+  color: inherit;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 10px;
+}
+
+.we-search:focus {
+  outline: 1px solid var(--vscode-focusBorder, #007fd4);
+  outline-offset: 1px;
+}
+
+.we-btn--compact {
+  flex: none;
+  padding: 7px 10px;
+}
+
+.we-lib-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+  max-height: min(52vh, 460px);
+  overflow-y: auto;
+}
+
+.we-lib-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 8px;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid transparent;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.we-lib-item:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.we-lib-item--current {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: var(--vscode-button-background, #0e639c);
+}
+
+.we-lib-item--inert {
+  opacity: 0.55;
+}
+
+.we-lib-thumb {
+  flex: none;
+  display: block;
+  width: 56px;
+  height: 32px;
+  overflow: hidden;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.we-lib-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.we-lib-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.we-lib-name {
+  font-size: 0.8rem;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.we-lib-meta {
+  font-size: 0.68rem;
+  opacity: 0.7;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.we-lib-empty {
+  margin: 12px 0 0;
+  font-size: 0.75rem;
+  opacity: 0.7;
+}
+
+.we-lib-empty[hidden] {
+  display: none;
+}
+
+.we-field {
+  display: block;
+  font-size: 0.76rem;
+}
+
+.we-field > span {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 3px;
+  opacity: 0.9;
+}
+
+.we-field output {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.7;
+}
+
+.we-field input[type='range'] {
+  width: 100%;
+  accent-color: var(--vscode-button-background, #0e639c);
+}
+
+.we-field--color {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.we-field--color input[type='color'] {
+  width: 48px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  background: none;
+}
+
+.we-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  font-size: 0.68rem;
+  opacity: 0.65;
+  word-break: break-all;
+}

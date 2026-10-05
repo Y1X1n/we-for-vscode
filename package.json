@@ -1,0 +1,221 @@
+{
+  "name": "we-for-vscode",
+  "displayName": "Wallpaper Engine for VS Code (PoC)",
+  "description": "把本机 Wallpaper Engine 壁纸渲染进 VS Code 的壁纸视图，配 iOS 风格液态玻璃面板。Port of dsh-wallpaper-engine (MIT) — PoC step 1: library discovery + Video playback + glass controls.",
+  "version": "0.1.0",
+  "publisher": "local-poc",
+  "license": "MIT",
+  "private": true,
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "wallpaper",
+    "wallpaper-engine",
+    "background",
+    "glass"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "只读取 Wallpaper Engine 安装目录与创意工坊目录用于枚举壁纸；不执行工作区内的任何代码。"
+    },
+    "virtualWorkspaces": {
+      "supported": false,
+      "description": "壁纸读取的是扩展宿主所在机器的本地磁盘路径，虚拟工作区无意义。"
+    }
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "weWallpaper.open",
+        "title": "打开壁纸视图",
+        "category": "Wallpaper Engine"
+      },
+      {
+        "command": "weWallpaper.pickWallpaper",
+        "title": "选择壁纸…",
+        "category": "Wallpaper Engine"
+      },
+      {
+        "command": "weWallpaper.nextWallpaper",
+        "title": "下一张壁纸",
+        "category": "Wallpaper Engine"
+      },
+      {
+        "command": "weWallpaper.rescan",
+        "title": "重新扫描壁纸库",
+        "category": "Wallpaper Engine"
+      },
+      {
+        "command": "weWallpaper.enableWorkbenchBackground",
+        "title": "启用壁纸背景（铺满 VS Code，实验/需改安装目录）",
+        "category": "Wallpaper Engine"
+      },
+      {
+        "command": "weWallpaper.disableWorkbenchBackground",
+        "title": "禁用壁纸背景（还原安装目录）",
+        "category": "Wallpaper Engine"
+      },
+      {
+        "command": "weWallpaper.workbenchStatus",
+        "title": "诊断：壁纸背景状态（补丁 / 校验和 / 已生效窗口数）",
+        "category": "Wallpaper Engine"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "weWallpaper.open",
+        "key": "ctrl+alt+w",
+        "mac": "cmd+alt+w"
+      }
+    ],
+    "configuration": {
+      "title": "Wallpaper Engine for VS Code",
+      "properties": {
+        "weWallpaper.steamRoot": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "手动指定 Steam 根目录（留空 = 自动探测：注册表 `HKCU\\Software\\Valve\\Steam` → 常见目录 → WSL `/mnt/*`）。多个目录用 `;` 分隔。"
+        },
+        "weWallpaper.blur": {
+          "type": "number",
+          "default": 16,
+          "minimum": 0,
+          "maximum": 60,
+          "description": "玻璃面板的背景模糊半径（px）。0–60，与原插件一致。"
+        },
+        "weWallpaper.saturate": {
+          "type": "number",
+          "default": 1.3,
+          "minimum": 0,
+          "maximum": 3,
+          "description": "玻璃背景的饱和度。原插件固定 1.3。"
+        },
+        "weWallpaper.wallpaperOpacity": {
+          "type": "number",
+          "default": 1,
+          "minimum": 0.05,
+          "maximum": 1,
+          "description": "壁纸图层不透明度。"
+        },
+        "weWallpaper.scrim": {
+          "type": "number",
+          "default": 0.35,
+          "minimum": 0,
+          "maximum": 1,
+          "description": "壁纸之上的暗化层强度（0 = 不暗化）。"
+        },
+        "weWallpaper.border": {
+          "type": "number",
+          "default": 1,
+          "minimum": 0,
+          "maximum": 8,
+          "description": "玻璃面板边框宽度（px）。"
+        },
+        "weWallpaper.glassAlpha": {
+          "type": "number",
+          "default": 0.45,
+          "minimum": 0,
+          "maximum": 1,
+          "description": "玻璃面板底色不透明度。会被可读性下限抬升（浅色主题 0.45 / 深色主题 0.59）。"
+        },
+        "weWallpaper.glassColor": {
+          "type": "string",
+          "default": "#101014",
+          "pattern": "^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$",
+          "description": "玻璃面板底色（十六进制）。"
+        },
+        "weWallpaper.panelWidth": {
+          "type": "number",
+          "default": 420,
+          "minimum": 240,
+          "maximum": 900,
+          "description": "玻璃面板宽度（px）。"
+        },
+        "weWallpaper.autoRotateSeconds": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 3600,
+          "description": "自动轮播间隔秒数（0 = 关闭）。只轮播 Video 壁纸。"
+        },
+        "weWallpaper.pauseWhenHidden": {
+          "type": "boolean",
+          "default": true,
+          "description": "面板不可见或窗口失焦时暂停播放（对应原插件的遮挡暂停）。"
+        },
+        "weWallpaper.logLevel": {
+          "type": "string",
+          "enum": [
+            "error",
+            "warn",
+            "info"
+          ],
+          "default": "warn",
+          "description": "输出到“Wallpaper Engine”输出通道的日志级别。"
+        },
+        "weWallpaper.mediaPort": {
+          "type": "number",
+          "default": 39127,
+          "minimum": 1024,
+          "maximum": 65535,
+          "markdownDescription": "本地壁纸媒体服务监听的端口（仅 `127.0.0.1`）。端口与 token 必须稳定，否则烤进 `workbench.html` 的媒体 URL 每次启动都会失效。端口被占用时自动改用随机端口。"
+        },
+        "weWallpaper.workbenchOpacity": {
+          "type": "number",
+          "default": 1,
+          "minimum": 0.05,
+          "maximum": 1,
+          "description": "【实验】铺满 VS Code 时壁纸图层的不透明度。"
+        },
+        "weWallpaper.workbenchScrim": {
+          "type": "number",
+          "default": 0.35,
+          "minimum": 0,
+          "maximum": 1,
+          "description": "【实验】铺满 VS Code 时，壁纸与界面之间的暗化层强度。调高更易读，调低壁纸更明显。"
+        },
+        "weWallpaper.workbenchLiveScene": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "让 **Scene / Web 壁纸在整窗背景层里也实时渲染**（默认关）。开启后，Scene 走随扩展发布的 webwallgl 引擎（经 blob URL 导入），Web 壁纸走同目录的 `we-workbench-web.html` 中转页（`frame-src 'self'` 允许，作者页面由引擎装进 sandbox iframe）——**两条路都不需要**改写受校验的 `workbench.html`。代价：整个 VS Code 背后是一块全屏动画表面（WebGL 画布或网页），正是「代码行残留/重影」那类合成问题的温床，所以默认关闭、失败自动退回预览静图。"
+        },
+        "weWallpaper.workbenchBackground": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "【实验】把壁纸铺满整个 VS Code（会修改安装目录下的 `workbench.html`，已备份、可随时关闭还原）。改完需要重载窗口生效；等同于命令「启用/禁用壁纸背景」。"
+        },
+        "weWallpaper.transparentTitleBar": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "让顶部标题栏与右上角的最小化/最大化/关闭按钮也透明。会写入三处设置（关闭时精确还原你的原值）：\n\n- `window.titleBarStyle: custom` —— 顶栏改由 DOM 渲染（`native` 时整条顶栏由 Windows 绘制，CSS 碰不到）；\n- `window.controlsStyle: custom` —— 决定那三个按钮是 **Electron 原生覆盖层**还是 DOM 元素；**只有 DOM 元素才可能被 CSS 透明化**（原生覆盖层的底色被 VS Code 用 `makeOpaque()` 强制成不透明，样式表再怎么 `!important` 也改不到）；\n- `workbench.colorCustomizations` 的 `titleBar.activeBackground` / `titleBar.inactiveBackground`。\n\n改完需要**完全关闭并重新打开 VS Code**：`controlsStyle` 只在创建窗口时读取，只重载窗口（Ctrl+R）不够。"
+        },
+        "weWallpaper.wallpaperId": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "当前壁纸的 id（工坊 id 或项目文件夹名）。可直接在这里填写来切换壁纸；用命令「选择壁纸…」挑选会顺便写回这里。留空 = 自动选第一张可播放的。"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "watch": "tsc -watch -p .",
+    "test": "node --test \"test/*.test.js\" \"test/*.test.mjs\"",
+    "verify": "npm run compile && npm test",
+    "vscode:uninstall": "node ./out/uninstall.js"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/vscode": "1.90.0",
+    "typescript": "^5.7.2"
+  }
+}
