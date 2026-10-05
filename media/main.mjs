@@ -17,6 +17,7 @@
  */
 
 import { buildGlassVars, clamp, LIMITS, renderModeLabel, themeKindFromClassList } from './glass.mjs';
+import { contrastFloor as contrastFloorMath, fillChannels, luminanceStats } from './contrast.mjs';
 import { computeLayerState, playButtonLabel } from './render-state.mjs';
 import { isLive, mountWallpaper } from './renderer.mjs';
 
@@ -56,6 +57,8 @@ const SLIDERS = [
   ['blur', 'in-blur', 'out-blur'],
   ['glassAlpha', 'in-glassAlpha', 'out-glassAlpha'],
   ['scrim', 'in-scrim', 'out-scrim'],
+  ['chromeGlassAlpha', 'in-chromeGlassAlpha', 'out-chromeGlassAlpha'],
+  ['editorGlassAlpha', 'in-editorGlassAlpha', 'out-editorGlassAlpha'],
   ['wallpaperOpacity', 'in-wallpaperOpacity', 'out-wallpaperOpacity'],
   ['border', 'in-border', 'out-border'],
   ['panelWidth', 'in-panelWidth', 'out-panelWidth'],
@@ -64,7 +67,7 @@ const SLIDERS = [
 
 const state = Object.assign(
   {
-    settings: { blur: 16, saturate: 1.3, wallpaperOpacity: 1, scrim: 0.35, border: 1, glassAlpha: 0.45, glassColor: '#101014', panelWidth: 420 },
+    settings: { blur: 16, saturate: 1.3, wallpaperOpacity: 1, scrim: 0.35, border: 1, glassAlpha: 0.45, glassColor: '#101014', panelWidth: 420, autoContrast: 'balanced', chromeGlassAlpha: 0.45, editorGlassAlpha: 0.72 },
     item: null,
     paused: false,
     visible: true,
@@ -101,10 +104,91 @@ function log(level, message) {
 
 // ── glass ───────────────────────────────────────────────────────────────────
 
+/**
+ * Readability floor for the wallpaper THIS panel shows.
+ *
+ * Only applied when the panel is the surface rendering the wallpaper: in the default
+ * `workbench` mode the panel is transparent over the whole-window layer, which has
+ * already raised its own dimming, and dimming twice would just make the window dark.
+ */
+let contrastFloor = { scrim: 0, fill: '0,0,0', blur: 0 };
+let contrastKey = null;
+let contrastStats = null;
+
+function measureContrast() {
+  const item = state.item;
+  if (!item) return;
+  const mode = state.settings?.autoContrast || 'balanced';
+  const panelOwnsWallpaper = state.panelLive !== false;
+  const key = `${item.id}:${panelOwnsWallpaper ? 'panel' : 'workbench'}:${mode}:${
+    el.live && el.live.querySelector('canvas') ? 'canvas' : 'image'
+  }`;
+  if (key === contrastKey) return;
+  contrastKey = key;
+  if (!panelOwnsWallpaper || mode === 'off') {
+    contrastStats = null;
+    contrastFloor = { scrim: 0, fill: '0,0,0', blur: 0 };
+    applyGlass();
+    return;
+  }
+  // Prefer what is actually on screen: the engine canvas once a Scene has painted, the
+  // captured frame, then the preview image the library already uses.
+  const canvas = el.live ? el.live.querySelector('canvas') : null;
+  const src = canvas && canvas.width ? canvas : state.sceneShot || item.preview;
+  if (!src) return;
+  const finish = (image) => {
+    try {
+      const size = 64;
+      const c = document.createElement('canvas');
+      c.width = size;
+      c.height = size;
+      const ctx = c.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(image, 0, 0, size, size);
+      contrastStats = luminanceStats({ data: ctx.getImageData(0, 0, size, size).data, width: size, height: size });
+      contrastFloor = contrastFloorFor(contrastStats);
+      applyGlass();
+      log('info', `对比度自动调整: p95=${contrastStats.p95} busy=${contrastStats.busy} → 暗化 ${contrastFloor.scrim} 模糊 ${contrastFloor.blur}px`);
+    } catch (err) {
+      // A tainted canvas or an unreadable frame: the user's own sliders stay in charge.
+      log('info', `对比度采样跳过：${String(err)}`);
+    }
+  };
+  if (typeof src === 'string') {
+    const image = new Image();
+    image.crossOrigin = 'anonymous';
+    image.addEventListener('load', () => finish(image), { once: true });
+    image.addEventListener('error', () => log('info', '对比度采样失败：预览图读不到'), { once: true });
+    image.src = src;
+  } else {
+    finish(src);
+  }
+}
+
+function contrastFloorFor(stats) {
+  const themeKind = themeKindFromClassList(document.body.classList);
+  const mode = state.settings?.autoContrast || 'balanced';
+  const floor = contrastFloorMath(stats, themeKind, mode);
+  return { scrim: floor.scrim, fill: fillChannels(floor.fill), blur: floor.blur };
+}
+
 function applyGlass() {
   const themeKind = themeKindFromClassList(document.body.classList);
-  const vars = buildGlassVars(state.settings, themeKind);
+  // The slider values are a FLOOR, not the final word: the wallpaper's own measured
+  // brightness can demand more dimming (and, when it is busy, a little blur).
+  const effective = {
+    ...state.settings,
+    scrim: Math.max(Number(state.settings?.scrim) || 0, contrastFloor.scrim),
+    blur: Math.max(Number(state.settings?.blur) || 0, contrastFloor.blur),
+  };
+  const vars = buildGlassVars(effective, themeKind);
+  vars['--we-scrim-fill'] = contrastFloor.fill;
   for (const [k, v] of Object.entries(vars)) document.documentElement.style.setProperty(k, v);
+  const out = document.getElementById('out-scrim');
+  if (out) {
+    const user = Number(state.settings?.scrim) || 0;
+    const shown = effective.scrim;
+    out.textContent = contrastFloor.scrim > user ? `${shown.toFixed(2)}（自动）` : shown.toFixed(2);
+  }
 }
 
 function syncInputs() {
@@ -113,7 +197,7 @@ function syncInputs() {
     const out = document.getElementById(outId);
     if (!input) continue;
     input.value = String(state.settings[key]);
-    if (out) out.textContent = key === 'panelWidth' ? `${Math.round(state.settings[key])}px` : String(Number(state.settings[key]).toFixed(2));
+    if (out && key !== 'scrim') out.textContent = key === 'panelWidth' ? `${Math.round(state.settings[key])}px` : String(Number(state.settings[key]).toFixed(2));
   }
   const color = document.getElementById('in-glassColor');
   if (color) color.value = state.settings.glassColor;
@@ -556,6 +640,7 @@ window.addEventListener('message', (event) => {
       break;
     case 'settings':
       state.settings = { ...state.settings, ...(msg.settings || {}) };
+      measureContrast();
       applyGlass();
       syncInputs();
       break;
@@ -567,6 +652,7 @@ window.addEventListener('message', (event) => {
       break;
     case 'item':
       setItem(msg.item || null);
+      measureContrast();
       if (libraryOpen) markCurrentLibraryRow(state.item?.id);
       break;
     case 'library':
@@ -575,6 +661,7 @@ window.addEventListener('message', (event) => {
     case 'live':
       // Who renders the wallpaper live: this panel, or the whole-window layer.
       state.panelLive = msg.panelLive !== false;
+      measureContrast();
       applyLayerState();
       break;
     case 'visibility':
@@ -590,8 +677,13 @@ window.addEventListener('message', (event) => {
   }
 });
 
-// Theme switches (light/dark) move the readability floor — recompute.
-new MutationObserver(applyGlass).observe(document.body, { attributes: true, attributeFilter: ['class'] });
+// Theme switches (light/dark) move the readability floor — recompute, and re-measure
+// because the direction of the correction flips with the theme.
+new MutationObserver(() => {
+  contrastKey = null;
+  measureContrast();
+  applyGlass();
+}).observe(document.body, { attributes: true, attributeFilter: ['class'] });
 
 // Self-report (info level): the one lifecycle the host cannot see. If the panel
 // shows nothing but the log is silent, these lines say which layer broke —

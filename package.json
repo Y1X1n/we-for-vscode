@@ -207,6 +207,35 @@
           "default": "workbench",
           "markdownDescription": "**同一张 Scene / Web 壁纸由哪一面实时渲染**（需要先打开「整窗层实时」）。实测：单个实时实例约耗 4% 单核，而两个实例跑在**同一个渲染进程主线程**上——那条线程还要跑编辑器 UI，所以同时渲染两遍不只是费电，也是打字卡顿/行残留的主要来源。默认 `workbench`：整窗层渲染，面板保留静图（面板徽章会标明「整窗层实时渲染」）。"
         },
+        "weWallpaper.chromeGlassAlpha": {
+          "type": "number",
+          "default": 0.45,
+          "minimum": 0,
+          "maximum": 1,
+          "markdownDescription": "**侧边栏 / 活动栏 / 标题栏 / 状态栏 / 面板的磨砂玻璃底衬不透明度**（0 = 完全透明，看得到原始壁纸；默认 0.45）。这三处会叠一层主题色调的半透明底 + 真正的高斯模糊（`backdrop-filter`），让图标与文字后面是柔化的色块而不是照片细节。模糊半径共用 `weWallpaper.blur`（磨砂至少 10px，否则不叫磨砂；把 `weWallpaper.blur` 调到更高会更柔）。会按主题的可读性下限自动抬升（浅色 0.45 / 深色 0.59），所以设 0 也会被抬到下限——想彻底关掉磨砂请把 `weWallpaper.blur` 设为 0。"
+        },
+        "weWallpaper.editorGlassAlpha": {
+          "type": "number",
+          "default": 0.72,
+          "minimum": 0,
+          "maximum": 1,
+          "markdownDescription": "**代码区底衬不透明度**（0 = 完全透明；默认 0.72）。代码文字需要稳定的底色，不能让壁纸的像素从字缝里透出来——这一层比侧边栏更实，并同样带高斯模糊，把照片的高频细节抹掉（这正是「高对比度壁纸下看不清」的主因）。同样受主题可读性下限约束。"
+        },
+        "weWallpaper.autoContrast": {
+          "type": "string",
+          "enum": [
+            "off",
+            "balanced",
+            "strong"
+          ],
+          "enumDescriptions": [
+            "不自动调整：完全按滑块数值（高对比度壁纸下界面可能看不清）",
+            "按壁纸实测亮度自动抬升暗化层，必要时加一点模糊（默认）",
+            "可读性优先：暗化更重、模糊更多"
+          ],
+          "default": "balanced",
+          "markdownDescription": "**按壁纸实测亮度自动保证界面可读性**。壁纸是一张照片，VS Code 的文字就直接压在它上面：暗而低对比的壁纸即使暗化层为 0 也没问题，但亮壁纸上的白字对比度只有约 1.1:1（等于看不见）——这是实测结论，不是口味问题。开启后，渲染壁纸的那一层会把自己的像素采样成亮度分布，按主题方向自动抬升：深色主题压亮部（黑色暗化），浅色主题提暗部（白色提亮）；画面很碎（细节多）时再叠一点模糊。\n\n滑块永远是**下限**：自动值只会比你设的更暗，不会更亮；想完全手控就选 `off`。"
+        },
         "weWallpaper.workbenchBackground": {
           "type": "boolean",
           "default": false,

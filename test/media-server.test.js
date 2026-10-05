@@ -135,8 +135,9 @@ test('/current + /status + /beacon: the routes the patched workbench relies on',
   // style probe fires on a timer and must never overwrite the scene report (that
   // overwrite is exactly how the whole-window scene failure stayed invisible).
   const styleBack = await (await fetch(`${server.origin}/probe`)).json();
-  assert.deepEqual({ ...styleBack, scene: undefined }, { ...JSON.parse(report), scene: undefined });
+  assert.deepEqual({ ...styleBack, scene: undefined, contrast: undefined }, { ...JSON.parse(report), scene: undefined, contrast: undefined });
   assert.equal(styleBack.scene, null);
+  assert.equal(styleBack.contrast, null);
 
   const sceneReport = JSON.stringify({ scene: { stage: 'mounted', key: 'k', err: null, tt: 'present' } });
   const scenePost = await fetch(`${server.origin}/probe`, {
@@ -148,6 +149,20 @@ test('/current + /status + /beacon: the routes the patched workbench relies on',
   const sceneBack = await (await fetch(`${server.origin}/probe`)).json();
   assert.deepEqual(sceneBack.scene, { stage: 'mounted', key: 'k', err: null, tt: 'present' }, 'scene 报告独立保存');
   assert.ok(sceneBack.styles, 'scene 上报不得覆盖 style 探针');
+
+  // Readability measurement: a THIRD slot. The scene report is rewritten on every poll
+  // (already-mounted), so a shared slot would hide the one number that says whether the
+  // code text is readable.
+  const contrastReport = JSON.stringify({ contrast: { stage: 'measured', key: 'k', err: 'p95=0.8 scrim=0.65 代码文字对比度=5.10:1', tt: 'present' } });
+  await fetch(`${server.origin}/probe`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+    body: contrastReport,
+  });
+  const contrastBack = await (await fetch(`${server.origin}/probe`)).json();
+  assert.match(contrastBack.contrast.err, /代码文字对比度=5\.10:1/, '对比度报告独立保存');
+  assert.deepEqual(contrastBack.scene, { stage: 'mounted', key: 'k', err: null, tt: 'present' }, '对比度上报不得覆盖 scene 报告');
+  assert.ok(contrastBack.styles, '对比度上报不得覆盖 style 探针');
 
   const preflight = await fetch(`${server.origin}/probe`, {
     method: 'OPTIONS',

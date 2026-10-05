@@ -102,7 +102,9 @@ body {
   position: absolute;
   inset: 0;
   z-index: 2;
-  background: #000;
+  /* The fill is a variable because the readability floor can be a dark scrim (dark
+     theme, bright wallpaper) or a white wash (light theme, dark wallpaper). */
+  background: rgb(var(--we-scrim-fill, 0, 0, 0));
   opacity: var(--we-scrim);
   pointer-events: none;
 }
