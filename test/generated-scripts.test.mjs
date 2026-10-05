@@ -105,10 +105,40 @@ test('frosting stays on the chrome: the code area is never blurred', () => {
     const open = css.indexOf('{', at);
     return css.slice(open, css.indexOf('}', open));
   };
-  // Sidebar / activity bar / title bar / status bar / panel: frosted.
-  const chrome = ruleFor('.monaco-workbench .part.sidebar,');
+  // Sidebar / activity bar / title bar / status bar / panel: frosted — on a
+  // pseudo-element, see the next assertions for why it cannot be the part itself.
+  const chrome = ruleFor('.monaco-workbench .part.sidebar::before');
   assert.match(chrome, /backdrop-filter:\s*blur\(/, '侧栏必须保留高斯模糊（磨砂玻璃）');
   assert.match(chrome, /background-color:\s*rgba\(var\(--we-wb-glass-rgb\)/, '侧栏要有主题色调的半透明底');
+  assert.match(chrome, /z-index: -1/, '玻璃层必须在内容之下');
+  assert.match(chrome, /pointer-events: none/, '玻璃层不得吃掉鼠标事件');
+  // The parts themselves must NOT be filtered: `backdrop-filter` creates a stacking
+  // context, and the chrome hosts popups. Trapped in it, a popup's z-index stops
+  // mattering and later-painted siblings cover it — measured: the File menu rendered
+  // under the wallpaper with no background at all. So no rule that targets a part
+  // (without ::before) may set a filter or a z-index.
+  const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({
+    selector: m[1].trim(),
+    body: m[2],
+  }));
+  const parts = ['.part.activitybar', '.part.sidebar', '.part.auxiliarybar', '.part.titlebar', '.part.statusbar', '.part.panel'];
+  const bare = rules.filter(
+    (r) => parts.some((p) => r.selector.includes(p)) && !r.selector.includes('::before'),
+  );
+  assert.ok(bare.length > 0, '必须能找到针对 part 的规则（否则这个断言是空转的）');
+  for (const rule of bare) {
+    assert.ok(!/backdrop-filter/.test(rule.body), `${rule.selector} 不得有 backdrop-filter（会困住菜单浮层）`);
+    assert.ok(!/(^|[^-\w])filter:/.test(rule.body), `${rule.selector} 不得有 filter`);
+    assert.ok(!/(^|[^-\w])z-index:/.test(rule.body), `${rule.selector} 不得被强制成层叠上下文`);
+    // Every other way to create a stacking context has the same effect on popups.
+    for (const trap of ['transform:', 'opacity:', 'isolation:', 'contain:', 'will-change:', 'perspective:']) {
+      assert.ok(!rule.body.includes(trap), `${rule.selector} 不得用 ${trap} 创建层叠上下文`);
+    }
+  }
+  // ...and the probe has to be able to prove it without opening a menu.
+  const js = buildJs(ORIGIN);
+  assert.match(js, /backdrop: cs\.backdropFilter \|\| cs\.webkitBackdropFilter/, '样式回报要带元素自身的 backdrop-filter');
+  assert.match(js, /backdropBefore: \(function \(\)/, '样式回报要带 ::before 的 backdrop-filter');
   // The code surface: translucent, no filter of any kind.
   const editor = ruleFor('.monaco-workbench .part.editor > .content {');
   assert.match(editor, /background-color:\s*rgba\(var\(--we-wb-editor-rgb\)/, '代码区要有底衬');

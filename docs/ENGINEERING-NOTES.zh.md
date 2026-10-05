@@ -46,7 +46,7 @@ npm install          # devDependencies：typescript + @types/*
 npm run compile      # tsc -> out/
 npm test             # 48 条测试
 npx @vscode/vsce package --allow-missing-repository --skip-license
-code --install-extension .\we-for-vscode-0.1.7.vsix --force
+code --install-extension .\we-for-vscode-0.1.8.vsix --force
 ```
 
 装好后会出现在**扩展视图**里（`local-poc.we-for-vscode`），并且**每个窗口都会激活**——这是方案 B 对所有窗口生效、命令/状态栏处处可用的前提。卸载：`code --uninstall-extension local-poc.we-for-vscode`。
