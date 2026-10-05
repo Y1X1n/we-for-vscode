@@ -640,6 +640,29 @@ ${scope} .monaco-workbench .part.panel::before {
 \t-webkit-backdrop-filter: blur(var(--we-wb-glass-blur, 0px)) saturate(var(--we-wb-glass-saturate, 1.25));
 }
 
+/* Popups get the same frosting: the theme's menu / quick-input / hover backgrounds are
+ * transparent here (see transparentVars), so without this a dropdown is a bare list of
+ * text floating over the wallpaper.
+ *
+ * The blur goes on a ::before for the same reason as the chrome: a menu can open a
+ * SUBMENU, and a filter on the menu itself would create a stacking context that traps
+ * it. The alpha is its own variable with a readable floor — a menu has to be legible
+ * whatever the glass slider says — and 0 (glass off) turns it off too.
+ */
+${scope} .monaco-workbench .context-view::before,
+${scope} .monaco-workbench .quick-input-widget::before,
+${scope} .monaco-workbench .monaco-hover::before {
+\tcontent: '';
+\tposition: absolute;
+\tinset: 0;
+\tz-index: -1;
+\tpointer-events: none;
+\tborder-radius: var(--vscode-cornerRadius-large, 6px);
+\tbackground-color: rgba(var(--we-wb-glass-rgb), var(--we-wb-menu-alpha, 0));
+\tbackdrop-filter: blur(var(--we-wb-glass-blur, 0px)) saturate(var(--we-wb-glass-saturate, 1.25));
+\t-webkit-backdrop-filter: blur(var(--we-wb-glass-blur, 0px)) saturate(var(--we-wb-glass-saturate, 1.25));
+}
+
 /* The code surface: translucent, but NEVER blurred.
  *
  * Glyphs need a stable backdrop, not the wallpaper's pixels between them, and the
@@ -1498,6 +1521,12 @@ export function buildJs(origin: string): string {
       }
       if (blur !== null) document.documentElement.style.setProperty('--we-wb-glass-blur', blur + 'px');
       if (chromeAlpha !== null) document.documentElement.style.setProperty('--we-wb-glass-alpha', String(chromeAlpha));
+      // Menus / command palette / hover widgets: the same glass, but never below a
+      // readable alpha (a menu has to stay legible whatever the slider says), and 0
+      // means "no glass anywhere", so it stays 0.
+      if (chromeAlpha !== null) {
+        document.documentElement.style.setProperty('--we-wb-menu-alpha', String(chromeAlpha > 0 ? Math.max(chromeAlpha, 0.55) : 0));
+      }
       // One saturation and one glass colour for every glass surface: these used to be
       // panel-only, so moving them changed nothing in the window.
       if (saturate !== null) document.documentElement.style.setProperty('--we-wb-glass-saturate', String(saturate));
