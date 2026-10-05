@@ -1,12 +1,20 @@
+*.vsix
+
+# Development-only material: the tests, the sources, and the repository docs
+# (screenshots + the engineering notes) never need to ship inside the extension.
 .vscode/**
+.gitignore
+.gitattributes
 src/**
 test/**
+tools/**
+docs/**
+README.en.md
 node_modules/**
-out/**/*.map
 _repo2/**
 _ref/**
 _scratch/**
 **/*.ts
+out/**/*.map
 tsconfig.json
 package-lock.json
-*.vsix
