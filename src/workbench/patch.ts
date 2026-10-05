@@ -648,8 +648,13 @@ ${scope} .monaco-workbench .part.panel::before {
  * SUBMENU, and a filter on the menu itself would create a stacking context that traps
  * it. The alpha is its own variable with a readable floor — a menu has to be legible
  * whatever the glass slider says — and 0 (glass off) turns it off too.
+ *
+ * Two selectors, because the menubar's dropdowns are NOT context views: they are
+ * .menubar .menubar-menu-items-holder, rendered inside the titlebar. Missing that one is
+ * why File / Edit still looked unfrosted while the command palette was already fine.
  */
 ${scope} .monaco-workbench .context-view::before,
+${scope} .monaco-workbench .menubar .menubar-menu-items-holder::before,
 ${scope} .monaco-workbench .quick-input-widget::before,
 ${scope} .monaco-workbench .monaco-hover::before {
 \tcontent: '';
@@ -849,6 +854,8 @@ export function buildJs(origin: string): string {
   var active = null;
   /** Open /events stream, so view pushes do not have to wait for a poll. */
   var viewStream = null;
+  /** Last reportSeq seen, so a host-requested style report fires exactly once. */
+  var lastReportSeq = 0;
   /** Last /current payload, replayed when the active element changes. */
   var lastPayload = null;
   /** Still URL currently in the <img>, so a scene's poster is set only once. */
@@ -1595,6 +1602,13 @@ export function buildJs(origin: string): string {
         if (!url) { schedule(video, 2000); return; }
         failures = 0;
         lastPayload = payload || {};
+        // The host can ask for a fresh style report (POST /probe {reReport:true}): the
+        // boot-time snapshot cannot describe a popup, and popups are exactly what needs
+        // checking after a change like "the dropdowns should be frosted too".
+        if (typeof payload.reportSeq === 'number' && payload.reportSeq !== lastReportSeq) {
+          lastReportSeq = payload.reportSeq;
+          if (lastReportSeq > 0) reportStyles();
+        }
         // Opacity / scrim come from the host's settings, applied here so that
         // changing a slider never has to rewrite workbench.html (which is a
         // checksummed file) or the cached css.
@@ -1781,6 +1795,11 @@ export function buildJs(origin: string): string {
       '.monaco-workbench .part.editor > .content .editor-group-container > .title .tabs',
       '.monaco-workbench .part.editor > .content .editor-group-container > .title .tab.active',
       '.monaco-workbench .part.statusbar',
+      // The menubar's dropdown. It only exists while a menu is open, which is why the
+      // report can be refreshed on demand (see reportSeq): this is how "is the File
+      // dropdown actually frosted?" gets answered without judging a screenshot.
+      '.monaco-workbench .menubar .menubar-menu-items-holder',
+      '.monaco-workbench .context-view',
       '.monaco-workbench .monaco-editor-background',
       '.monaco-workbench .monaco-editor .view-overlays',
       // The cursor's line. A solid fill here is the "black band on the current

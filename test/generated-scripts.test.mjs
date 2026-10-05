@@ -145,10 +145,16 @@ test('frosting stays on the chrome: the code area is never blurred', () => {
   assert.match(popup, /backdrop-filter:\s*blur\(/, '下拉菜单要有高斯模糊');
   assert.match(popup, /background-color:\s*rgba\(var\(--we-wb-glass-rgb\)/, '下拉菜单要有玻璃底色');
   assert.match(popup, /z-index: -1/, '玻璃层必须在菜单内容之下');
+  // The menubar's dropdowns are NOT context views — they are
+  // `.menubar .menubar-menu-items-holder` inside the titlebar. Missing that selector is
+  // exactly why File / Edit still looked unfrosted while the command palette was fine.
+  const menubar = ruleFor('.monaco-workbench .menubar .menubar-menu-items-holder::before');
+  assert.match(menubar, /backdrop-filter:\s*blur\(/, '顶部菜单栏的下拉也要有高斯模糊');
+  assert.match(menubar, /background-color:\s*rgba\(var\(--we-wb-glass-rgb\)/, '顶部菜单栏下拉要有玻璃底色');
   assert.match(js, /setProperty\('--we-wb-menu-alpha'/, '运行时写入菜单玻璃不透明度');
   assert.match(js, /Math\.max\(chromeAlpha, 0\.55\)/, '菜单不透明度要有可读性下限');
   // The popups themselves must stay free of filters and stacking contexts.
-  const popupParts = ['.context-view', '.quick-input-widget', '.monaco-hover'];
+  const popupParts = ['.context-view', '.quick-input-widget', '.monaco-hover', '.menubar-menu-items-holder'];
   for (const rule of rules) {
     if (rule.selector.includes('::before')) continue;
     if (!popupParts.some((p) => rule.selector.includes(p))) continue;
@@ -238,6 +244,21 @@ test('the window consumes the saturation and glass colour it is sent', () => {
   // The default colour means "follow the theme tone", so a light theme is not forced
   // into the dark default by a picker that cannot express "unset".
   assert.match(js, /return rgb === '16,16,20' \? null : rgb;/, '默认色 = 跟随主题');
+});
+
+test('the style report can be refreshed on demand', () => {
+  // The report is a boot-time snapshot, so it cannot describe a popup — and a popup is
+  // exactly what needs checking ("are the File/Edit dropdowns frosted?"). POST
+  // /probe {reReport:true} bumps a sequence the page watches.
+  const js = buildJs(ORIGIN);
+  assert.match(js, /payload\.reportSeq !== lastReportSeq/, '页面要跟随 reportSeq 重新上报');
+  assert.match(js, /if \(lastReportSeq > 0\) reportStyles\(\);/, '收到请求后重新上报一次');
+  assert.match(js, /'\.monaco-workbench \.menubar \.menubar-menu-items-holder'/, '样式回报要覆盖顶部菜单栏下拉');
+  assert.match(js, /'\.monaco-workbench \.context-view'/, '样式回报要覆盖右键/上下文菜单');
+  const server = read('src/media/server.ts');
+  assert.match(server, /parsed\.reReport === true/, '/probe 要支持 reReport');
+  assert.match(server, /this\.reportSeq \+= 1/, 'reReport 要递增序号');
+  assert.match(server, /reportSeq: this\.reportSeq/, '载荷要带上序号');
 });
 
 test('the panel has an apply button and the host answers it', () => {

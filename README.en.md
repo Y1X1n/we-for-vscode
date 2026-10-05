@@ -60,7 +60,7 @@ Render your **local Wallpaper Engine wallpapers** inside VS Code: a liquid-glass
 # installation, and installing while VS Code runs leaves the webview with a
 # "Could not register service worker" error.
 & "$env:LOCALAPPDATA\Programs\Microsoft VS Code\bin\code.cmd" `
-  --install-extension .\we-for-vscode-0.1.9.vsix --force
+  --install-extension .\we-for-vscode-0.1.10.vsix --force
 ```
 
 Start VS Code afterwards: the extension activates on startup, and `Ctrl+Alt+W` opens the wallpaper view.
@@ -72,7 +72,7 @@ git clone https://github.com/Y1X1n/we-for-vscode.git
 cd we-for-vscode
 npm install
 npm run verify                        # tsc + node --test
-npx vsce package --no-dependencies    # produces we-for-vscode-0.1.9.vsix
+npx vsce package --no-dependencies    # produces we-for-vscode-0.1.10.vsix
 ```
 
 ### Turning on "fill the whole window"
