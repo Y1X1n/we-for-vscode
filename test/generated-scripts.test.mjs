@@ -125,7 +125,7 @@ test('the readability readout follows the settings, not just the pixels', () => 
   // a slider, otherwise /probe describes a configuration that is no longer in force
   // (measured: flipping autoContrast off left the old 4.51:1 in the probe slot).
   assert.match(js, /function reportMeasurement\(\)/, '上报要独立成函数');
-  const applyView = js.slice(js.indexOf('function applyView('), js.indexOf('function applyView(') + 2000);
+  const applyView = js.slice(js.indexOf('function applyView('), js.indexOf('function applyView(') + 3200);
   assert.match(applyView, /reportMeasurement\(\)/, '滑块变化后必须重算并上报');
   const schedule = js.slice(js.indexOf('function scheduleContrast('), js.indexOf('function scheduleContrast(') + 1200);
   assert.match(schedule, /if \(key === contrastKey && contrastStats\) return;/, '像素采样仍只在壁纸变化时做（不能每轮都读回）');
@@ -151,6 +151,47 @@ test('the page applies view pushes from /events, with the poll as the fallback',
   // The fallback stays: if the stream never opens (or dies), the poll still drives it.
   assert.match(js, /window\.setInterval\(function \(\) \{ refresh\(video\); \}, POLL_MS\)/, '轮询必须保留为兜底');
   assert.match(js, /if \(viewStream \|\| typeof EventSource !== 'function'\) return;/, '没有 EventSource 时要安静退回轮询');
+});
+
+test('every slider reaches the window: one knob, no silent floor', () => {
+  const ext = read('src/extension.ts');
+  const push = ext.slice(ext.indexOf('const pushWorkbenchView'), ext.indexOf('const autoContrastMode'));
+  // The alphas go out raw. `glassAlphaFloor` used to raise any positive value to the
+  // theme floor, so 0.2 showed up as 0.59 — reported as "任何参数调节之后都没有用".
+  assert.ok(!/glassAlphaFloor/.test(ext), '不得再有会覆盖滑块的玻璃下限');
+  for (const key of ['chromeGlassAlpha', 'editorGlassAlpha', 'saturate', 'glassColor']) {
+    assert.ok(push.includes(key), `pushWorkbenchView 必须推送 ${key}`);
+  }
+  // Panel-only keys are mirrored onto the window's key, so either slider moves both.
+  const pairs = ext.slice(ext.indexOf('const SETTING_PAIRS'), ext.indexOf('const mirrorPairedSettings'));
+  for (const pair of ['scrim', 'glassAlpha', 'wallpaperOpacity']) {
+    assert.ok(pairs.includes(`'${pair}'`), `${pair} 必须与整窗键镜像`);
+  }
+  assert.match(ext, /void mirrorPairedSettings\(e\)/, '配置变化时要执行镜像');
+  // Every view key must be in the push condition: a key that is missing is a slider
+  // that changes the configuration and nothing else (how 暗化层/壁纸不透明度 behaved).
+  for (const key of ['scrim', 'glassAlpha', 'wallpaperOpacity', 'saturate', 'glassColor']) {
+    assert.ok(
+      ext.includes(`e.affectsConfiguration('weWallpaper.${key}')`),
+      `${key} 变化后必须推送视图`,
+    );
+  }
+  // The readability floor is opt-in: with autoContrast off the slider is the value.
+  const pkg = JSON.parse(read('package.json'));
+  assert.equal(pkg.contributes.configuration.properties['weWallpaper.autoContrast'].default, 'off', 'autoContrast 默认必须是 off');
+  assert.match(ext, /get<string>\('autoContrast', 'off'\)/, '读取默认值也要是 off');
+});
+
+test('the window consumes the saturation and glass colour it is sent', () => {
+  const css = buildCss(ORIGIN);
+  assert.match(css, /saturate\(var\(--we-wb-glass-saturate, 1\.25\)\)/, '侧栏饱和度必须可调');
+  const js = buildJs(ORIGIN);
+  assert.match(js, /function wbGlassRgb\(color\)/, '要有十六进制转 rgb 的助手');
+  assert.match(js, /setProperty\('--we-wb-glass-saturate'/, '运行时写入饱和度');
+  assert.match(js, /setProperty\('--we-wb-glass-rgb', glassRgb\)/, '运行时写入玻璃颜色');
+  // The default colour means "follow the theme tone", so a light theme is not forced
+  // into the dark default by a picker that cannot express "unset".
+  assert.match(js, /return rgb === '16,16,20' \? null : rgb;/, '默认色 = 跟随主题');
 });
 
 test('the panel has an apply button and the host answers it', () => {

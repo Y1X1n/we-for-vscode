@@ -623,8 +623,8 @@ ${scope} .monaco-workbench .part.titlebar,
 ${scope} .monaco-workbench .part.statusbar,
 ${scope} .monaco-workbench .part.panel {
 \tbackground-color: rgba(var(--we-wb-glass-rgb), var(--we-wb-glass-alpha, 0)) !important;
-\tbackdrop-filter: blur(var(--we-wb-glass-blur, 0px)) saturate(1.25);
-\t-webkit-backdrop-filter: blur(var(--we-wb-glass-blur, 0px)) saturate(1.25);
+\tbackdrop-filter: blur(var(--we-wb-glass-blur, 0px)) saturate(var(--we-wb-glass-saturate, 1.25));
+\t-webkit-backdrop-filter: blur(var(--we-wb-glass-blur, 0px)) saturate(var(--we-wb-glass-saturate, 1.25));
 }
 
 /* The code surface: translucent, but NEVER blurred.
@@ -1452,13 +1452,31 @@ export function buildJs(origin: string): string {
   // A z-index:-1 layer is not always repainted promptly when only an inherited
   // variable changes; one forced reflow per *change* (never per frame, and never
   // while a slider is being dragged) makes it immediate.
+  /**
+   * The panel's default colour (#101014) means "follow the theme tone", so a light
+   * theme keeps its pale glass instead of getting a dark tone the picker cannot express
+   * as "unset". Any other value overrides the tone for every glass surface.
+   */
+  function wbGlassRgb(color) {
+    if (typeof color !== 'string') return null;
+    var m = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.exec(color.trim());
+    if (!m) return null;
+    var hex = m[1];
+    if (hex.length === 3) hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2];
+    var rgb = [parseInt(hex.slice(0, 2), 16), parseInt(hex.slice(2, 4), 16), parseInt(hex.slice(4, 6), 16)].join(',');
+    return rgb === '16,16,20' ? null : rgb;
+  }
+
   function applyView(payload, el) {
     var opacity = typeof payload.opacity === 'number' ? payload.opacity : null;
     var scrim = typeof payload.scrim === 'number' ? payload.scrim : null;
     var blur = typeof payload.blur === 'number' ? payload.blur : null;
     var chromeAlpha = typeof payload.chromeGlassAlpha === 'number' ? payload.chromeGlassAlpha : null;
     var editorAlpha = typeof payload.editorGlassAlpha === 'number' ? payload.editorGlassAlpha : null;
-    if (opacity === null && scrim === null && blur === null && chromeAlpha === null && editorAlpha === null && !contrastStats) return;
+    var saturate = typeof payload.saturate === 'number' ? payload.saturate : null;
+    var glassRgb = wbGlassRgb(payload.glassColor);
+    if (opacity === null && scrim === null && blur === null && chromeAlpha === null && editorAlpha === null
+      && saturate === null && !glassRgb && !contrastStats) return;
     var changed = false;
     try {
       if (opacity !== null) {
@@ -1467,9 +1485,13 @@ export function buildJs(origin: string): string {
       }
       if (blur !== null) document.documentElement.style.setProperty('--we-wb-glass-blur', blur + 'px');
       if (chromeAlpha !== null) document.documentElement.style.setProperty('--we-wb-glass-alpha', String(chromeAlpha));
-      // The code surface: the user's slider is a floor, and the measurement can raise
-      // it to whatever the WCAG target needs. Applied from the same place the scrim is,
-      // so a theme change (or a new wallpaper) re-solves both together.
+      // One saturation and one glass colour for every glass surface: these used to be
+      // panel-only, so moving them changed nothing in the window.
+      if (saturate !== null) document.documentElement.style.setProperty('--we-wb-glass-saturate', String(saturate));
+      if (glassRgb) document.documentElement.style.setProperty('--we-wb-glass-rgb', glassRgb);
+      // The code surface: the user's slider is the value, and the measurement only
+      // raises it when the readability mode is on (autoContrast = off by default, so a
+      // slider that says 0.3 really is 0.3 — "调了参数没有用" was this floor).
       if (editorAlpha !== null) userEditorAlpha = editorAlpha;
       var solved = solveEditorAlpha();
       var effectiveEditor = Math.max(userEditorAlpha === null ? 0 : userEditorAlpha, solved);
@@ -1477,8 +1499,8 @@ export function buildJs(origin: string): string {
       // The numbers a slider changes have to follow it in /probe too (no re-sampling).
       reportMeasurement();
       if (scrim !== null) userScrim = scrim;
-      // The effective dimming is the stronger of what the user asked for and what
-      // the wallpaper's own brightness says the text needs.
+      // Same rule for the dimming layer: with the readability mode off, 0 means a
+      // fully transparent layer, exactly as the slider says.
       var floor = wbContrast(contrastStats, wbThemeKind(), contrastMode());
       var effective = Math.max(userScrim === null ? 0 : userScrim, floor.scrim);
       effective = Math.round(effective * 1000) / 1000;

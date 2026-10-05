@@ -257,51 +257,42 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // ── 方案 B: wallpaper behind the workbench (experiment, reversible) ────────
   const workbenchPatchSettings = (origin: string) => ({ origin });
 
-  /** Push the view sliders to the patched pages (no re-patch, no reload). */
+  /**
+   * Push the view sliders to the patched pages (no re-patch, no reload).
+   *
+   * Everything goes out RAW. A readability floor that silently raised a slider is what
+   * the user reported as "任何参数调节之后都没有用": 0 has to mean "no glass / no dimming",
+   * and the user's value has to be the value. `autoContrast` is the opt-in that adds a
+   * floor back when it is switched on.
+   */
   const pushWorkbenchView = (): void => {
     const cfg = vscode.workspace.getConfiguration('weWallpaper');
     media.setView({
       opacity: cfg.get<number>('workbenchOpacity', 1),
       scrim: cfg.get<number>('workbenchScrim', 0.35),
       contrast: autoContrastMode(),
-      // The chrome/editor glass: one radius for both surfaces, and each alpha raised
-      // to the theme's readability floor — the same constraint the panel's glass
-      // obeys (media/glass.mjs), applied here because the host is what knows the theme.
-      // The radius has a floor of its own: a translucent layer with no blur is not
-      // frosted glass at all, and the user's blur slider is shared with the panel.
-      blur: Math.max(cfg.get<number>('blur', 16), 10),
-      chromeGlassAlpha: glassAlphaFloor(cfg.get<number>('chromeGlassAlpha', 0.45)),
-      editorGlassAlpha: glassAlphaFloor(cfg.get<number>('editorGlassAlpha', 0.72)),
+      // One blur radius, one saturation and one glass colour for every glass surface —
+      // the panel's sliders used to drive only the panel, which is why moving them
+      // changed nothing in the window.
+      blur: cfg.get<number>('blur', 16),
+      chromeGlassAlpha: cfg.get<number>('chromeGlassAlpha', 0.45),
+      editorGlassAlpha: cfg.get<number>('editorGlassAlpha', 0.72),
+      saturate: cfg.get<number>('saturate', 1.3),
+      glassColor: cfg.get<string>('glassColor', '#101014'),
     });
-  };
-
-  /**
-   * Light themes need 0.45, dark ones 0.59 (measured; see media/glass.mjs).
-   *
-   * 0 is passed through as 0 — it means "no glass at all", which has to stay
-   * reachable, otherwise the fully transparent window this extension started as
-   * could never be recovered by the slider. Any positive value is raised to the
-   * floor, because a partly transparent surface that is too transparent to read is
-   * exactly the bug this feature exists to fix.
-   */
-  const glassAlphaFloor = (alpha: number): number => {
-    const value = Number(alpha);
-    if (!Number.isFinite(value) || value <= 0) return 0;
-    const kind = vscode.window.activeColorTheme.kind;
-    const light =
-      kind === vscode.ColorThemeKind.Light || kind === vscode.ColorThemeKind.HighContrastLight;
-    const floor = light ? 0.45 : 0.59;
-    return Math.max(0, Math.min(1, Math.max(value, floor)));
   };
 
   /**
    * How hard the wallpaper has to get out of the text's way. The patched page
    * measures its own pixels and raises the dimming itself (it owns the wallpaper and
    * cannot import the panel's module); this only carries the user's choice.
+   *
+   * Default `off`: the sliders are the truth, and the measurement is a read-out. The
+   * dimming floor is a deliberate opt-in, not something that overrides a slider.
    */
   const autoContrastMode = (): 'off' | 'balanced' | 'strong' => {
-    const value = vscode.workspace.getConfiguration('weWallpaper').get<string>('autoContrast', 'balanced');
-    return value === 'off' || value === 'strong' || value === 'balanced' ? value : 'balanced';
+    const value = vscode.workspace.getConfiguration('weWallpaper').get<string>('autoContrast', 'off');
+    return value === 'strong' || value === 'balanced' ? value : 'off';
   };
 
   /**
@@ -344,6 +335,46 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       written += 1;
     }
     return written;
+  };
+
+  /**
+   * Keep the paired settings equal: the panel's key and the window's key describe the
+   * same visual property, and either one can be the one the user moved.
+   *
+   * The panel's sliders were born as panel-only settings (upstream's glass panel), so
+   * moving 暗化层 / 玻璃底色不透明度 / 壁纸不透明度 changed nothing in the window — reported
+   * as "任何参数调节之后都没有用". Mirroring here (rather than making the panel write two
+   * keys) keeps the VS Code settings UI working in both directions too.
+   *
+   * `corrective` marks the write as ours, so the configuration listener ignores the
+   * echo instead of bouncing it back and forth.
+   */
+  const SETTING_PAIRS: ReadonlyArray<readonly [string, string]> = [
+    ['scrim', 'workbenchScrim'],
+    ['glassAlpha', 'chromeGlassAlpha'],
+    ['wallpaperOpacity', 'workbenchOpacity'],
+  ];
+
+  const mirrorPairedSettings = async (e: vscode.ConfigurationChangeEvent): Promise<void> => {
+    const cfg = vscode.workspace.getConfiguration('weWallpaper');
+    let wrote = false;
+    for (const [a, b] of SETTING_PAIRS) {
+      const touchedA = e.affectsConfiguration(`weWallpaper.${a}`);
+      const touchedB = e.affectsConfiguration(`weWallpaper.${b}`);
+      if (!touchedA && !touchedB) continue;
+      // The one that changed wins; when both did (a first-run write), `a` is the panel's
+      // and it is the one the sliders show.
+      const source = touchedA ? a : b;
+      const target = source === a ? b : a;
+      const value = cfg.get<number>(source);
+      if (typeof value !== 'number' || cfg.get<number>(target) === value) continue;
+      await setSetting(target, value, true);
+      wrote = true;
+    }
+    // The corrective write above is marked to be ignored by the configuration listener,
+    // so its echo would NOT push the view — and the window would keep the previous value
+    // (measured: 暗化层 moved to 0.5, the window stayed at 0). Push it here instead.
+    if (wrote) pushWorkbenchView();
   };
 
   const promptReload = async (message: string): Promise<void> => {
@@ -707,10 +738,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         e.affectsConfiguration('weWallpaper.blur') ||
         e.affectsConfiguration('weWallpaper.chromeGlassAlpha') ||
         e.affectsConfiguration('weWallpaper.editorGlassAlpha') ||
-        e.affectsConfiguration('weWallpaper.autoContrast')
+        e.affectsConfiguration('weWallpaper.autoContrast') ||
+        // The panel's keys count too: every slider there now drives a window surface,
+        // and a key missing from this list is exactly how "调了参数没有用" happens.
+        e.affectsConfiguration('weWallpaper.scrim') ||
+        e.affectsConfiguration('weWallpaper.glassAlpha') ||
+        e.affectsConfiguration('weWallpaper.wallpaperOpacity') ||
+        e.affectsConfiguration('weWallpaper.saturate') ||
+        e.affectsConfiguration('weWallpaper.glassColor')
       ) {
-        // Sliders go straight to the patched pages on their next poll: no
-        // workbench.html rewrite, no reload prompt.
+        // Sliders go straight to the patched pages over /events (and the poll as a
+        // fallback): no workbench.html rewrite, no reload prompt.
         pushWorkbenchView();
       }
       // Everything below is a switch in the settings UI doing real work, so the
@@ -743,6 +781,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           });
         }
       }
+      // One knob per visual property, two keys behind it.
+      //
+      // The panel's sliders were born as panel-only settings (upstream's glass panel),
+      // so moving 暗化层 / 玻璃底色不透明度 / 壁纸不透明度 changed nothing in the window —
+      // reported as "任何参数调节之后都没有用". Mirroring here (rather than making the panel
+      // write two keys) keeps the VS Code settings UI working in both directions too.
+      void mirrorPairedSettings(e);
       // Which surface renders live, and whether it renders live at all: both decide
       // what the panel does AND what /current carries, so re-apply the selection.
       if (
