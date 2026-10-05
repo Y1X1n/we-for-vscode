@@ -206,6 +206,20 @@ body {
   gap: 10px;
 }
 
+/* 「立即生效」 and its one-line feedback. It lives with the sliders because that is what
+   it applies; the hint stays `hidden` until the host answers, and `[hidden]` is
+   restated below for the same reason as `.we-controls` (a flex display would win). */
+.we-apply {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.we-apply > .we-hint[hidden] {
+  display: none;
+}
+
 /* The library replaces the sliders while it is open. `hidden` MUST be restated here:
    the UA rule `[hidden] { display: none }` loses to the author `display: flex` above,
    so without this line the controls would stay on screen behind the list. */

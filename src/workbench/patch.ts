@@ -811,6 +811,8 @@ export function buildJs(origin: string): string {
   var underlaySampled = false;
   /** Element currently showing the wallpaper (video or still). */
   var active = null;
+  /** Open /events stream, so view pushes do not have to wait for a poll. */
+  var viewStream = null;
   /** Last /current payload, replayed when the active element changes. */
   var lastPayload = null;
   /** Still URL currently in the <img>, so a scene's poster is set only once. */
@@ -1510,7 +1512,21 @@ export function buildJs(origin: string): string {
   function refresh(video) {
     fetch(ORIGIN + '/current', { cache: 'no-store' })
       .then(function (r) { if (!r.ok) throw new Error('http ' + r.status); return r.json(); })
-      .then(function (payload) {
+      .then(function (payload) { applyPayload(payload, video); })
+      ['catch'](function () { schedule(video, 0); });
+  }
+
+  /**
+   * Apply one view payload — from the poll, or from the /events push.
+   *
+   * Split out of refresh() so the server-sent stream can drive exactly the same code:
+   * a slider moved in the panel arrives here in milliseconds instead of waiting for the
+   * next poll, and while the window is occluded that poll is throttled to about once a
+   * minute, which is what made settings look like they did nothing.
+   */
+  function applyPayload(payload, video) {
+    {
+      {
         var url = payload && payload.url;
         if (!url) { schedule(video, 2000); return; }
         failures = 0;
@@ -1581,7 +1597,8 @@ export function buildJs(origin: string): string {
           // report the answer to "is the cursor line still black?" is always MISSING.
           window.setTimeout(reportStyles, 9000);
         }
-      })['catch'](function () { schedule(video, 0); });
+      }
+    }
   }
 
   function schedule(video, delay) {
@@ -1627,9 +1644,33 @@ export function buildJs(origin: string): string {
     window.addEventListener('pageshow', nudge);
 
     refresh(video);
+    // Instant updates: the host pushes every view change over /events, so a slider (or
+    // the panel's 「立即生效」 button) lands in the window immediately. The poll below
+    // stays as the fallback — it is also what recovers if the stream never opens, and
+    // EventSource reconnects on its own with the retry hint the server sends.
+    openViewStream(video);
     // Follow wallpaper switches (and a sibling window taking over the port)
     // without needing a reload.
     window.setInterval(function () { refresh(video); }, POLL_MS);
+  }
+
+  /** Subscribe to the server's view pushes (see applyPayload). */
+  function openViewStream(video) {
+    if (viewStream || typeof EventSource !== 'function') return;
+    try {
+      viewStream = new EventSource(ORIGIN + '/events');
+      viewStream.addEventListener('view', function (ev) {
+        try {
+          applyPayload(JSON.parse(ev.data), video);
+        } catch (e) { /* a malformed frame must not break the poll */ }
+      });
+      viewStream.addEventListener('error', function () {
+        // EventSource retries by itself; if the port is gone for good, the poll and its
+        // backoff take over (and the sibling-window takeover path resets the page).
+      });
+    } catch (e) {
+      viewStream = null;
+    }
   }
 
   function boot() {

@@ -182,6 +182,70 @@ test('/current + /status + /beacon: the routes the patched workbench relies on',
   assert.equal((await (await fetch(`${server.origin}/probe`)).json()).doc, 'doc-b');
 });
 
+test('live server: /events pushes the view the moment it changes', async (t) => {
+  // The 15 s poll is not enough on its own: Chromium throttles timers to about once a
+  // minute while the window is occluded, so a slider moved in the panel could take a
+  // minute to appear — which reads as "the setting does nothing". The stream is what
+  // makes it instant, and what the panel's 「立即生效」 button relies on.
+  const server = new MediaServer(() => {}, { secret: 'events-secret' });
+  t.after(() => server.dispose());
+  const origin = await server.start();
+
+  server.setCurrent({ url: 'http://x/m/first', kind: 'image', still: null });
+  const res = await fetch(`${origin}/events`, { headers: { Accept: 'text/event-stream' } });
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get('content-type') || '', /text\/event-stream/);
+  assert.equal(res.headers.get('access-control-allow-origin'), '*', 'EventSource 需要 CORS');
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffered = '';
+  const nextEvent = async (timeoutMs = 2000) => {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const idx = buffered.indexOf('\n\n');
+      if (idx >= 0) {
+        const frame = buffered.slice(0, idx);
+        buffered = buffered.slice(idx + 2);
+        const line = frame.split('\n').find((l) => l.startsWith('data: '));
+        if (line) return JSON.parse(line.slice(6));
+        continue; // retry:/ping frames carry no data
+      }
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffered += decoder.decode(value, { stream: true });
+    }
+    throw new Error('no event arrived');
+  };
+
+  // First frame: the current view, so a fresh page does not need a poll to start.
+  const first = await nextEvent();
+  assert.equal(first.url, 'http://x/m/first');
+  assert.equal(first.kind, 'image');
+  assert.equal(typeof first.chromeGlassAlpha, 'number', '推送载荷与 /current 同形');
+
+  // A view change is pushed immediately, without waiting for anything.
+  server.setView({ scrim: 0.42, chromeGlassAlpha: 0.61, editorGlassAlpha: 0.88, contrast: 'strong' });
+  const pushed = await nextEvent();
+  assert.equal(pushed.scrim, 0.42);
+  assert.equal(pushed.chromeGlassAlpha, 0.61);
+  assert.equal(pushed.editorGlassAlpha, 0.88);
+  assert.equal(pushed.contrast, 'strong');
+
+  // A wallpaper switch is a view change too.
+  server.setCurrent({ url: 'http://x/m/second', kind: 'video', still: null });
+  const switched = await nextEvent();
+  assert.equal(switched.url, 'http://x/m/second');
+  assert.equal(switched.kind, 'video');
+
+  // The poll endpoint answers the same payload, so the two can never disagree.
+  const current = await (await fetch(`${origin}/current`)).json();
+  assert.equal(current.url, 'http://x/m/second');
+  assert.equal(current.scrim, 0.42);
+  assert.equal(current.chromeGlassAlpha, 0.61);
+  await reader.cancel().catch(() => {});
+});
+
 test('live server: token gate, Range, HEAD, method and root fencing', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'we-media-'));
   const outside = await mkdtemp(join(tmpdir(), 'we-outside-'));
