@@ -53,13 +53,26 @@
 
 **要求**：Windows；本机已安装 Wallpaper Engine；VS Code ≥ 1.90。
 
+### 从扩展市场安装（推荐）
+
+在 VS Code 里搜 **Wallpaper Engine for VS Code**，或：
+
+```powershell
+code --install-extension y1x1n.we-for-vscode
+```
+
+> **这是非官方扩展**，与 Wallpaper Engine（Kristjan Skutta）及 Microsoft 均无关联；
+> 它读取你本机已安装的 Wallpaper Engine 创意工坊壁纸，不包含也不分发任何壁纸素材。
+> 「铺满整个窗口」是**可选的实验功能**，默认关闭：它会改写 VS Code 安装目录里的
+> `workbench.html`（安装目录内的补丁，可一键还原，见下方「还原」）。
+
 ### 用 Release 里的 vsix
 
 ```powershell
 # 先完全关闭 VS Code（整窗背景层是文件级补丁，运行中安装会留给 webview 一个
 # "Could not register service worker" 报错）
 & "$env:LOCALAPPDATA\Programs\Microsoft VS Code\bin\code.cmd" `
-  --install-extension .\we-for-vscode-0.1.10.vsix --force
+  --install-extension .\we-for-vscode-0.1.11.vsix --force
 ```
 
 装好后启动 VS Code：扩展会自动激活，壁纸视图用 `Ctrl+Alt+W` 打开。
@@ -71,7 +84,7 @@ git clone https://github.com/Y1X1n/we-for-vscode.git
 cd we-for-vscode
 npm install
 npm run verify                        # tsc + node --test
-npx vsce package --no-dependencies    # 产出 we-for-vscode-0.1.10.vsix
+npx vsce package --no-dependencies    # 产出 we-for-vscode-0.1.11.vsix
 ```
 
 ### 打开“铺满整个窗口”
