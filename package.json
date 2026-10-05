@@ -2,7 +2,7 @@
   "name": "we-for-vscode",
   "displayName": "Wallpaper Engine for VS Code (PoC)",
   "description": "把本机 Wallpaper Engine 壁纸渲染进 VS Code 的壁纸视图，配 iOS 风格液态玻璃面板。Port of dsh-wallpaper-engine (MIT) — PoC step 1: library discovery + Video playback + glass controls.",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "publisher": "local-poc",
   "license": "MIT",
   "private": true,

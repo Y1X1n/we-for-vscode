@@ -30,10 +30,14 @@ export interface PanelHooks {
   /**
    * The panel's 「立即生效」 button: apply the current settings to the windows now.
    * Settings already push on change (and over /events), so this exists for the cases
-   * where that is not enough — a dropped stream, or an asset update that genuinely
-   * needs a window reload.
+   * where that is not enough — a dropped stream, an asset update that needs a reload,
+   * or a slider whose debounced write has not reached the configuration yet.
+   *
+   * `settings` carries the panel's current values: they are authoritative, because the
+   * configuration may still hold the previous ones (that mismatch is what made the
+   * button revert a slider and push the old value).
    */
-  onApplyRequest(): void;
+  onApplyRequest(settings?: Record<string, unknown>): void;
   onSettingChange(key: string, value: unknown): Promise<void>;
   onWebviewLog(level: 'info' | 'warn' | 'error', message: string): void;
 }
@@ -86,7 +90,16 @@ export class WallpaperPanel {
     this.panel.webview.html = this.loadingHtml();
     void this.applyHtml();
     this.panel.webview.onDidReceiveMessage(
-      (msg: { type?: string; key?: string; value?: unknown; level?: string; message?: string; id?: string }) => {
+      (msg: {
+        type?: string;
+        key?: string;
+        value?: unknown;
+        level?: string;
+        message?: string;
+        id?: string;
+        /** 「立即生效」 carries the panel's current values (they win over the config). */
+        settings?: Record<string, unknown>;
+      }) => {
         void this.onMessage(msg);
       },
       null,
@@ -136,6 +149,8 @@ export class WallpaperPanel {
     level?: string;
     message?: string;
     id?: string;
+    /** 「立即生效」 carries the panel's current values (they win over the config). */
+    settings?: Record<string, unknown>;
   }): Promise<void> {
     switch (msg.type) {
       case 'ready':
@@ -158,7 +173,11 @@ export class WallpaperPanel {
         this.hooks.onNextRequest();
         break;
       case 'apply':
-        this.hooks.onApplyRequest();
+        this.hooks.onApplyRequest(
+          msg.settings && typeof msg.settings === 'object'
+            ? (msg.settings as Record<string, unknown>)
+            : undefined,
+        );
         break;
       case 'setting':
         if (typeof msg.key === 'string') await this.hooks.onSettingChange(msg.key, msg.value);

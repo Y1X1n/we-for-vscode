@@ -121,7 +121,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         .catch((err) => log.error(`扫描壁纸库失败：${String(err)}`));
     },
     onNextRequest: (): void => void nextWallpaper(),
-    onApplyRequest: (): void => void applyNow(),
+    onApplyRequest: (settings?: Record<string, unknown>): void => void applyNow(settings),
     onSettingChange: async (key: string, value: unknown): Promise<void> => {
       await vscode.workspace.getConfiguration('weWallpaper').update(key, value, vscode.ConfigurationTarget.Global);
     },
@@ -314,7 +314,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
    * that one is the usual reason a setting "did nothing" right after an extension
    * update.
    */
-  const applyNow = async (): Promise<void> => {
+  const applyNow = async (settings?: Record<string, unknown>): Promise<void> => {
+    // The panel's values win: they are what the user just set, and the configuration can
+    // still hold the previous ones (the webview debounces its writes by 150 ms, and the
+    // write itself is async). Writing them first is what stops the button from pushing
+    // — and echoing back — a stale value.
+    const written = settings ? await writePanelSettings(settings) : 0;
     pushWorkbenchView();
     WallpaperPanel.instance?.pushSettings();
     const status = installer.status();
@@ -324,8 +329,21 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       await promptReload('壁纸资源已更新：需要重载窗口后生效。');
       return;
     }
-    log.info('立即生效：已把当前设置推送到所有已打补丁的窗口');
+    log.info(`立即生效：已把当前设置推送到所有已打补丁的窗口${written ? `（先写入了 ${written} 项未落地的设置）` : ''}`);
     WallpaperPanel.instance?.post({ type: 'applied', reload: false });
+  };
+
+  /** Write the settings the panel says are current; returns how many actually changed. */
+  const writePanelSettings = async (settings: Record<string, unknown>): Promise<number> => {
+    const cfg = vscode.workspace.getConfiguration('weWallpaper');
+    let written = 0;
+    for (const [key, value] of Object.entries(settings)) {
+      if (value === undefined || value === null) continue;
+      if (cfg.get(key) === value) continue;
+      await setSetting(key, value, true);
+      written += 1;
+    }
+    return written;
   };
 
   const promptReload = async (message: string): Promise<void> => {
