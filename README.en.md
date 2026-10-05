@@ -118,8 +118,8 @@ The panel has three buttons: `pause/play`, `选择壁纸…` (expand/collapse th
 | `weWallpaper.workbenchBackground` | `false` | **Experimental**: wallpaper behind the whole window (patches the installation, reversible) |
 | `weWallpaper.workbenchOpacity` | `1` | Whole-window layer opacity |
 | `weWallpaper.workbenchScrim` | `0.35` | Whole-window dimming |
-| `weWallpaper.workbenchLiveScene` | `false` | **Experimental**: render Scene **and Web** wallpapers live in the whole-window layer (off = preview image only). That layer renders tuned for a background (`renderDpr` 0.5 → engine R=0.6, 24 fps, `medium` particles); the panel keeps full quality |
-| `weWallpaper.liveSurface` | `workbench` | **Which surface renders a Scene/Web wallpaper live**: `workbench` (default: the whole-window layer renders, the panel shows the still) / `panel` (the reverse) / `both` (old behaviour — renders the same wallpaper twice) |
+| `weWallpaper.workbenchLiveScene` | `false` | **Experimental**: render Scene **and Web** wallpapers live in the whole-window layer (off = preview image only). That layer renders tuned for a background (`renderDpr` 1 = one canvas pixel per CSS pixel, ≈0.44× the pixels; 24 fps; `medium` particles); the panel keeps full quality |
+| `weWallpaper.liveSurface` | `workbench` | **Which surface renders a Scene/Web wallpaper live**: `workbench` (default: the whole-window layer renders and the transparent panel shows it through) / `panel` (the reverse) / `both` (old behaviour — renders the same wallpaper twice) |
 | `weWallpaper.transparentTitleBar` | `false` | Transparent title bar and window buttons |
 | `weWallpaper.logLevel` | `warn` | Level of the "Wallpaper Engine" output channel (use `info` when debugging) |
 
@@ -170,8 +170,9 @@ Live rendering runs on the **window renderer's main thread** — the same one th
 
 That is why two defaults exist:
 
-- **The whole-window layer renders tuned for a background**: `renderDpr` 0.5 (engine R=0.6, ≈0.64× the texture pixels and bandwidth), 24 fps, `medium` particles — invisible behind a translucent UI, while the panel keeps full quality.
-- **One wallpaper is rendered once by default** (`weWallpaper.liveSurface = workbench`): dropping the second engine instance halves the main-thread pressure. Switching to `panel` or `both` is one setting away, you just pay for it.
+- **The whole-window layer renders tuned for a background**: `renderDpr` 1 — the canvas drops from the device pixel ratio (1839×1239 here) to one pixel per CSS pixel (1226×826), ≈0.44× the pixels, and the remaining 1.5× upscale on a 150% display is invisible behind the UI — plus 24 fps and `medium` particles. The panel keeps full quality.
+  (`0.5` was tried first: a 613×413 canvas, 9× fewer pixels, visibly soft in a screenshot and too risky for Web wallpapers with text/UI.)
+- **One wallpaper is rendered once by default** (`weWallpaper.liveSurface = workbench`): dropping the second engine instance halves the main-thread pressure. And because the panel itself is transparent, it simply **shows the whole-window layer's live wallpaper through** — nothing looks degraded, there is just one render. Switching to `panel` or `both` is one setting away, you just pay for it.
 
 ## Known limitations
 

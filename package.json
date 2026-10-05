@@ -190,7 +190,7 @@
         "weWallpaper.workbenchLiveScene": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "让 **Scene / Web 壁纸在整窗背景层里也实时渲染**（默认关）。开启后，Scene 走随扩展发布的 webwallgl 引擎（经 blob URL 导入），Web 壁纸走同目录的 `we-workbench-web.html` 中转页（`frame-src 'self'` 允许，作者页面由引擎装进 sandbox iframe）——**两条路都不需要**改写受校验的 `workbench.html`。代价：整个 VS Code 背后是一块全屏动画表面（WebGL 画布或网页），正是「代码行残留/重影」那类合成问题的温床，所以默认关闭、失败自动退回预览静图。整窗层会按背景层的定位降配渲染（`renderDpr` 0.5 → 引擎内部 R=0.6、24 fps、粒子 medium），面板仍保持全质量。"
+          "markdownDescription": "让 **Scene / Web 壁纸在整窗背景层里也实时渲染**（默认关）。开启后，Scene 走随扩展发布的 webwallgl 引擎（经 blob URL 导入），Web 壁纸走同目录的 `we-workbench-web.html` 中转页（`frame-src 'self'` 允许，作者页面由引擎装进 sandbox iframe）——**两条路都不需要**改写受校验的 `workbench.html`。代价：整个 VS Code 背后是一块全屏动画表面（WebGL 画布或网页），正是「代码行残留/重影」那类合成问题的温床，所以默认关闭、失败自动退回预览静图。整窗层会按背景层的定位降配渲染（`renderDpr` 1 = 每 CSS 像素一个画布像素，像素约 0.44×；24 fps；粒子 medium），面板仍保持全质量。"
         },
         "weWallpaper.liveSurface": {
           "type": "string",

@@ -117,8 +117,8 @@ npx vsce package --no-dependencies    # 产出 we-for-vscode-0.1.1.vsix
 | `weWallpaper.workbenchBackground` | `false` | **实验**：壁纸铺满整个 VS Code（改安装目录，可还原） |
 | `weWallpaper.workbenchOpacity` | `1` | 整窗层壁纸不透明度 |
 | `weWallpaper.workbenchScrim` | `0.35` | 整窗层暗化强度 |
-| `weWallpaper.workbenchLiveScene` | `false` | **实验**：让 **Scene / Web 壁纸在整窗层也实时渲染**（关 = 只显示预览图）。整窗层按"背景层"定位降配：`renderDpr` 0.5（引擎内部 R=0.6）、24 fps、粒子 `medium`；面板始终全质量 |
-| `weWallpaper.liveSurface` | `workbench` | **同一张 Scene/Web 壁纸由哪一面实时渲染**：`workbench`（默认：整窗层实时、面板显示静图）/ `panel`（反过来）/ `both`（旧行为，同一张壁纸渲染两遍） |
+| `weWallpaper.workbenchLiveScene` | `false` | **实验**：让 **Scene / Web 壁纸在整窗层也实时渲染**（关 = 只显示预览图）。整窗层按"背景层"定位降配：`renderDpr` 1（每 CSS 像素一个画布像素，像素约 0.44×）、24 fps、粒子 `medium`；面板始终全质量 |
+| `weWallpaper.liveSurface` | `workbench` | **同一张 Scene/Web 壁纸由哪一面实时渲染**：`workbench`（默认：整窗层实时，面板**透明透出**它，不再自己渲染）/ `panel`（反过来）/ `both`（旧行为，同一张壁纸渲染两遍） |
 | `weWallpaper.transparentTitleBar` | `false` | 透明标题栏与右上角三个按钮 |
 | `weWallpaper.logLevel` | `warn` | 输出通道 "Wallpaper Engine" 的日志级别（排错时开 `info`） |
 
@@ -169,8 +169,9 @@ VS Code 没有“把窗口背景交给扩展”的 API，所以这一层是**文
 
 结论落到两个默认行为上：
 
-- **整窗层按"背景"降配**：`renderDpr` 0.5（引擎内部 R=0.6，像素/带宽约 0.64×）、24 fps、粒子 `medium`——它隔着半透明 UI，看不出差别；面板保持全质量。
-- **同一张壁纸默认只渲染一遍**（`weWallpaper.liveSurface = workbench`）：两个引擎实例省掉一个，也就省掉一半主线程压力。切到 `panel` 或 `both` 随时可以，只是要自己承担那份开销。
+- **整窗层按"背景"降配**：`renderDpr` 1 —— 画布从设备像素比（本机 1839×1239）降到每 CSS 像素一个（1226×826），像素约 0.44×，150% 缩放下剩下的 1.5× 放大隔着 UI 看不出；再叠加 24 fps、粒子 `medium`。面板保持全质量。
+  （先试过 `0.5`：画布 613×413、像素少 9×，截图明显发糊，对带文字/UI 的 Web 壁纸风险太大，故取 1。）
+- **同一张壁纸默认只渲染一遍**（`weWallpaper.liveSurface = workbench`）：两个引擎实例省掉一个，也就省掉一半主线程压力。而面板本身是透明的，会**透出整窗层的实时壁纸**——观感没变差，只是少了一份渲染。切到 `panel` 或 `both` 随时可以，只是要自己承担那份开销。
 
 ## 已知限制
 
