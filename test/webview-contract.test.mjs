@@ -213,6 +213,30 @@ test('wallpaper selection happens inside the panel, not in a QuickPick', () => {
   assert.match(styleSrc, /\.we-controls\[hidden\]\s*\{\s*display: none;/, '打开壁纸库时滑块必须真的隐藏（UA 的 [hidden] 敌不过 display:flex）');
 });
 
+test('only one surface renders a Scene/Web wallpaper live (the panel obeys the host)', () => {
+  // Two engine instances for the same wallpaper cost a second full render on the
+  // renderer main thread — measured ~4% of one core per instance, sharing the thread
+  // the editor UI runs on. The host owns the policy; the panel only obeys it.
+  assert.match(mainSrc, /const panelLive = state\.panelLive !== false/, 'webview 必须按主机策略决定是否挂载引擎');
+  assert.match(mainSrc, /isLive\(state\.item\) && panelLive/, '关掉面板实时后不得再挂载');
+  // A mount already in flight when the policy flips must be parked: the engine exposes
+  // no destroy(), so without this the panel keeps rendering a detached 0x0 canvas —
+  // invisible, and worse than the duplicate it replaced (reproduced live).
+  assert.match(mainSrc, /if \(attachedLive !== key\) \{[\s\S]*?instance\.pause\(\)/, '竞态中的挂载必须被取消并释放');
+  assert.match(mainSrc, /实时挂载已被取消/, '取消要留一条日志，否则下次只能靠猜');
+  assert.match(mainSrc, /case 'live':/, 'webview 必须处理 live 消息');
+  assert.match(mainSrc, /整窗层实时渲染/, '面板不是实时面时必须如实标注徽章（不能继续写"实时渲染"）');
+  assert.match(panelSrc, /setLiveSurface\(panelLive: boolean\)/, 'panel.ts 必须能下发实时面策略');
+  assert.match(panelSrc, /type: 'live', panelLive/, 'panel.ts 必须发送 live 消息');
+  assert.match(panelSrc, /this\.post\(\{ type: 'live', panelLive: this\.panelLive \}\)/, 'ready 时必须重放策略（首推会输给文档加载）');
+  const extensionSrc = read('src/extension.ts');
+  assert.match(extensionSrc, /const liveSurface = \(\)/, 'extension.ts 必须读 liveSurface 设置');
+  assert.match(extensionSrc, /service\.workbenchTargetFor\(item, liveSceneEnabled\(\), liveSurface\(\)\)/, '两个调用点都要传实时面');
+  assert.match(extensionSrc, /workbenchRendersLive/, '面板策略要按"整窗层是否真的在实时渲染"算，而不是只看设置');
+  // The whole-window layer is tuned for its job (behind a translucent UI at 24fps).
+  assert.match(read('src/workbench/patch.ts'), /renderDpr: 1[\s\S]*?fps: 24[\s\S]*?particles: 'medium'/, '整窗层要降配渲染');
+});
+
 test('every browser module parses (a syntax error here kills the whole panel)', () => {
   // This is not hypothetical: a botched edit left `log('info', 暂停/恢复失败：);` in
   // main.mjs, the module failed to parse, the webview never sent `ready`, and the panel

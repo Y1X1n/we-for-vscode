@@ -172,8 +172,7 @@ test('/current reports the kind, so the injected script can pick <video> or <img
   assert.equal(payload.url, 'http://x/m/p');
 });
 
-test('the whole-window live scene is opt-in, and carries its still as a fallback', async (t) => {
-  const media = new MediaServer(silent, { secret: 'test-secret' });
+test('the whole-window live scene is opt-in, and carries its still as a fallback', async (t) => {  const media = new MediaServer(silent, { secret: 'test-secret' });
   t.after(() => media.dispose());
   const service = new WallpaperService(silent, media, () => []);
   const scene = {
@@ -194,6 +193,42 @@ test('the whole-window live scene is opt-in, and carries its still as a fallback
   });
   // Videos and poster items are unaffected by the switch.
   assert.deepEqual(service.workbenchTargetFor({ renderMode: 'video', media: 'http://x/m/v' }, true), {
+    url: 'http://x/m/v',
+    kind: 'video',
+  });
+});
+
+test('liveSurface=panel hands the whole-window layer the still instead of a second engine', async (t) => {
+  // Rendering the same wallpaper in the panel and behind the window means two engine
+  // instances, measured to share the renderer main thread the editor UI runs on.
+  // `workbench` (default) and `both` behave identically HERE — the panel is what
+  // changes — while `panel` degrades this layer to the still.
+  const media = new MediaServer(silent, { secret: 'test-secret' });
+  t.after(() => media.dispose());
+  const service = new WallpaperService(silent, media, () => []);
+  const scene = {
+    renderMode: 'scene',
+    media: 'http://x/wallpaper-engine/scene-files/t/scene.pkg',
+    sceneBase: 'http://x/wallpaper-engine/scene-files/t',
+    preview: 'http://x/m/p',
+  };
+  const web = {
+    renderMode: 'web',
+    media: 'http://x/wallpaper-engine/scene-files/w/index.html',
+    sceneBase: 'http://x/wallpaper-engine/scene-files/w',
+    preview: 'http://x/m/p',
+  };
+  const live = { url: 'http://x/wallpaper-engine/scene-files/t', kind: 'scene', still: 'http://x/m/p' };
+
+  // Default surface ('both' is what the old call sites did): unchanged.
+  assert.deepEqual(service.workbenchTargetFor(scene, true, 'both'), live);
+  assert.deepEqual(service.workbenchTargetFor(scene, true, 'workbench'), live);
+  // panel owns the live render -> this layer must not mount a second engine.
+  assert.deepEqual(service.workbenchTargetFor(scene, true, 'panel'), { url: 'http://x/m/p', kind: 'image' });
+  assert.deepEqual(service.workbenchTargetFor(web, true, 'panel'), { url: 'http://x/m/p', kind: 'image' });
+  // A video wallpaper is cheap to play in both places and is NOT gated by the surface:
+  // there is no second engine instance to avoid, only a second <video> element.
+  assert.deepEqual(service.workbenchTargetFor({ renderMode: 'video', media: 'http://x/m/v' }, true, 'panel'), {
     url: 'http://x/m/v',
     kind: 'video',
   });

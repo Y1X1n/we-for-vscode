@@ -55,6 +55,14 @@ export class WallpaperPanel {
    */
   private lastSnapshot: InventorySnapshot | undefined;
   private lastItem: WallpaperItem | null | undefined;
+  /**
+   * Whether THIS panel should mount the engine for the current item. The host decides
+   * (weWallpaper.liveSurface): with `workbench` the identical render already happens
+   * behind the whole window, and a second engine instance would cost another full
+   * render on the same main thread for no visual gain. Replayed on `ready` like the
+   * rest of the state, because the first push races the document load.
+   */
+  private panelLive = true;
 
   private constructor(
     private readonly panel: vscode.WebviewPanel,
@@ -124,6 +132,7 @@ export class WallpaperPanel {
         // Replay whatever the host already decided, in render order.
         if (this.lastSnapshot) this.post({ type: 'inventory', snapshot: this.lastSnapshot });
         if (this.lastItem !== undefined) this.post({ type: 'item', item: this.lastItem });
+        this.post({ type: 'live', panelLive: this.panelLive });
         // A webview that VS Code RESTORED (tab brought back on restart) never went
         // through the open command, so the host has no inventory yet — and without
         // this the panel sits on "正在扫描本地壁纸库…" forever, which reads as "the
@@ -170,6 +179,16 @@ export class WallpaperPanel {
 
   pushSettings(): void {
     this.post({ type: 'settings', settings: this.readSettings() });
+  }
+
+  /**
+   * Whether the panel is the surface that renders the wallpaper live. `false` means
+   * the whole-window layer owns it (the panel then shows the still), which is what
+   * keeps one wallpaper from being rendered twice on the same main thread.
+   */
+  setLiveSurface(panelLive: boolean): void {
+    this.panelLive = !!panelLive;
+    this.post({ type: 'live', panelLive: this.panelLive });
   }
 
   /**

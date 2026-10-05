@@ -16,7 +16,7 @@ import * as vscode from 'vscode';
 import { Level, Logger } from './log';
 import { MediaServer } from './media/server';
 import { WallpaperPanel } from './panel/panel';
-import { WallpaperService } from './service';
+import { WallpaperItem, WallpaperService } from './service';
 import {
   CONTROLS_STYLE_DOM,
   EDITOR_OVERLAY_COLORS,
@@ -85,6 +85,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   /** Opt-in: a live Scene behind the whole UI (see workbenchTargetFor). */
   const liveSceneEnabled = (): boolean =>
     vscode.workspace.getConfiguration('weWallpaper').get<boolean>('workbenchLiveScene', false);
+  /**
+   * Which surface renders a Scene/Web wallpaper live when both are available.
+   *
+   * Rendering the same wallpaper in the panel *and* behind the whole UI means two
+   * engine instances, and measured they share one thing: the renderer process's main
+   * thread — the same thread the editor UI runs on. `workbench` (the default) puts the
+   * live render where the user actually looks at the whole window and leaves the panel
+   * on the captured still; `panel` is the reverse; `both` is the old behaviour.
+   */
+  const liveSurface = (): 'both' | 'workbench' | 'panel' => {
+    const value = vscode.workspace.getConfiguration('weWallpaper').get<string>('liveSurface', 'workbench');
+    return value === 'panel' || value === 'both' || value === 'workbench' ? value : 'workbench';
+  };
   // The patched workbench imports the engine from a blob URL (its CSP allows blob:
   // scripts but not the loopback origin), so the engine file is served from the
   // extension's own media directory — never from the user's disk.
@@ -127,6 +140,26 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     return service.scan(force);
   };
 
+  /**
+   * True when the whole-window layer is the live surface for this item: the switch is
+   * on, the installation is patched, the layer's live renderer is enabled, and the
+   * item is one the engine can mount. Only then may the panel skip its own instance —
+   * otherwise the panel would show a still with nothing live anywhere.
+   */
+  const workbenchRendersLive = (item: WallpaperItem | undefined, patched = installer.status().patched): boolean =>
+    Boolean(item) &&
+    patched &&
+    liveSurface() === 'workbench' &&
+    liveSceneEnabled() &&
+    vscode.workspace.getConfiguration('weWallpaper').get<boolean>('workbenchBackground', false) &&
+    (item?.renderMode === 'scene' || item?.renderMode === 'web') &&
+    Boolean(item?.sceneBase);
+
+  /** Tell the panel whether IT should mount the engine for the current item. */
+  const syncPanelLivePolicy = (item: WallpaperItem | undefined, patched?: boolean): void => {
+    WallpaperPanel.instance?.setLiveSurface(!workbenchRendersLive(item, patched));
+  };
+
   const showSelected = async (item = service.find(selectedId) ?? service.playableItems()[0]) => {
     if (!item) return;
     selectedId = item.id;
@@ -134,12 +167,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     status.text = `$(file-media) ${item.title}`;
     status.tooltip = `Wallpaper Engine：${item.title}（${item.type}${item.contentrating ? ` · ${item.contentrating}` : ''}）`;
     WallpaperPanel.instance?.showItem(item);
+    const patched = installer.status().patched;
+    syncPanelLivePolicy(item, patched);
     log.info(`面板项已更新：${item.title}（renderMode=${item.renderMode}，面板${WallpaperPanel.instance ? '已打开' : '未打开'}）`);
     // Mirror the selection into the settings page so it is visible/editable there.
     const cfg = vscode.workspace.getConfiguration('weWallpaper');
     if (cfg.get<string>('wallpaperId', '') !== item.id) await setSetting('wallpaperId', item.id, true);
     // Keep the workbench background in step with the selection.
-    if (installer.status().patched) void refreshWorkbenchPatch(true);
+    if (patched) void refreshWorkbenchPatch(true);
   };
 
   async function openPanel(): Promise<void> {
@@ -152,6 +187,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     if (item) {
       selectedId = item.id;
       await context.globalState.update(SELECTED_KEY, item.id);
+      // Decide the live surface BEFORE pushing the item: the webview mounts on the
+      // first `item` it sees, and a mount that starts first has to be torn down again.
+      panel.setLiveSurface(!workbenchRendersLive(item));
       panel.showItem(item);
       status.text = `$(file-media) ${item.title}`;
       status.tooltip = `Wallpaper Engine：${item.title}（${item.type}）`;
@@ -378,7 +416,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }
     // The patched page polls /current, so this alone switches every patched
     // window — no rewrite of workbench.html (and therefore no checksum change).
-    media.setCurrent(service.workbenchTargetFor(item, liveSceneEnabled()));
+    media.setCurrent(service.workbenchTargetFor(item, liveSceneEnabled(), liveSurface()));
     pushWorkbenchView();
     const after = await installer.enable(workbenchPatchSettings(origin));
     await applyWallpaperEditorSettings(true);
@@ -412,7 +450,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       return;
     }
     const origin = await ensureMedia();
-    media.setCurrent(service.workbenchTargetFor(item, liveSceneEnabled()));
+    media.setCurrent(service.workbenchTargetFor(item, liveSceneEnabled(), liveSurface()));
     const after = await installer.enable(workbenchPatchSettings(origin));
     await applyWallpaperEditorSettings(true);
     log.info(`补丁状态：patched=${after.patched} checksumMismatch=${after.checksumMismatch ?? false}`);
@@ -610,6 +648,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             return undefined;
           });
         }
+      }
+      // Which surface renders live, and whether it renders live at all: both decide
+      // what the panel does AND what /current carries, so re-apply the selection.
+      if (
+        e.affectsConfiguration('weWallpaper.liveSurface') ||
+        e.affectsConfiguration('weWallpaper.workbenchLiveScene')
+      ) {
+        void ensureInventory().then(() => {
+          const item = service.find(selectedId) ?? service.playableItems()[0];
+          if (item) return showSelected(item);
+          return undefined;
+        });
       }
       WallpaperPanel.instance?.pushSettings();
     }),

@@ -118,7 +118,8 @@ The panel has three buttons: `pause/play`, `选择壁纸…` (expand/collapse th
 | `weWallpaper.workbenchBackground` | `false` | **Experimental**: wallpaper behind the whole window (patches the installation, reversible) |
 | `weWallpaper.workbenchOpacity` | `1` | Whole-window layer opacity |
 | `weWallpaper.workbenchScrim` | `0.35` | Whole-window dimming |
-| `weWallpaper.workbenchLiveScene` | `false` | **Experimental**: render Scene **and Web** wallpapers live in the whole-window layer (off = preview image only) |
+| `weWallpaper.workbenchLiveScene` | `false` | **Experimental**: render Scene **and Web** wallpapers live in the whole-window layer (off = preview image only). That layer renders tuned for a background (`renderDpr` 0.5 → engine R=0.6, 24 fps, `medium` particles); the panel keeps full quality |
+| `weWallpaper.liveSurface` | `workbench` | **Which surface renders a Scene/Web wallpaper live**: `workbench` (default: the whole-window layer renders, the panel shows the still) / `panel` (the reverse) / `both` (old behaviour — renders the same wallpaper twice) |
 | `weWallpaper.transparentTitleBar` | `false` | Transparent title bar and window buttons |
 | `weWallpaper.logLevel` | `warn` | Level of the "Wallpaper Engine" output channel (use `info` when debugging) |
 
@@ -155,6 +156,22 @@ Live Scene/Web rendering in that layer each had their own wall, and the measured
 Live rendering is done by **`webwallgl@2.1.0` (MIT)**, shipped with the extension under [`media/webwallgl/`](media/webwallgl/) (with its `LICENSE` and `UPSTREAM.json`). The panel imports it same-origin; the whole-window layer imports it from a blob URL.
 
 The deeper field notes (per-directive CSP matching, `makeOpaque()` versus Electron's native window buttons, Trusted Types, multi-window port takeover, …) are in [`docs/ENGINEERING-NOTES.zh.md`](docs/ENGINEERING-NOTES.zh.md) (Chinese).
+
+### Performance
+
+Live rendering runs on the **window renderer's main thread** — the same one the editor UI runs on — so what it costs is not only battery, it is whether typing stays responsive. How these numbers were taken: attribute CPU per Electron process role (`renderer` / `gpu-process` / `extensionHost`) instead of summing every `Code.exe`, and sample **A/B/A/B** rather than A-then-B (this machine's noise band is ±5–8% of one core, enough to invert a conclusion).
+
+| Configuration (panel closed, 150% scaling, a light Scene) | CPU (one core = 100%) |
+|---|---|
+| Whole-window layer showing the still (preview GIF) | 27.5 / 27.9 |
+| The same wallpaper rendered live | 31.4 / 32.2 → **≈ +4% per live instance** |
+| Heavy scene (32 layers, 4K) × a second instance | 40.0 → 44.4 → **+4.4% again** |
+| Both surfaces live, window minimized | **3.0** (42.4 while visible) → nothing burns in the background |
+
+That is why two defaults exist:
+
+- **The whole-window layer renders tuned for a background**: `renderDpr` 0.5 (engine R=0.6, ≈0.64× the texture pixels and bandwidth), 24 fps, `medium` particles — invisible behind a translucent UI, while the panel keeps full quality.
+- **One wallpaper is rendered once by default** (`weWallpaper.liveSurface = workbench`): dropping the second engine instance halves the main-thread pressure. Switching to `panel` or `both` is one setting away, you just pay for it.
 
 ## Known limitations
 
