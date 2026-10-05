@@ -732,6 +732,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       if (!e.affectsConfiguration('weWallpaper')) return;
       if (e.affectsConfiguration('weWallpaper.logLevel')) log.setLevel(readLevel());
       if (e.affectsConfiguration('weWallpaper.autoRotateSeconds')) restartRotation();
+      // The panel displays these values and only refreshes when the host pushes them:
+      // without this, editing a setting in the VS Code settings UI (or settings.json)
+      // left the panel showing the old number — which reads as "这个值改不动".
+      if (e.affectsConfiguration('weWallpaper')) WallpaperPanel.instance?.pushSettings();
       if (
         e.affectsConfiguration('weWallpaper.workbenchOpacity') ||
         e.affectsConfiguration('weWallpaper.workbenchScrim') ||

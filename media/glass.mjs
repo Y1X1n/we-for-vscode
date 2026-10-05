@@ -22,6 +22,8 @@ export const LIMITS = {
   scrim: [0, 1],
   border: [0, 8],
   glassAlpha: [0, 1],
+  chromeGlassAlpha: [0, 1],
+  editorGlassAlpha: [0, 1],
   panelWidth: [240, 900],
 };
 
