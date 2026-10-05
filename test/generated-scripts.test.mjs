@@ -139,6 +139,22 @@ test('frosting stays on the chrome: the code area is never blurred', () => {
   const js = buildJs(ORIGIN);
   assert.match(js, /backdrop: cs\.backdropFilter \|\| cs\.webkitBackdropFilter/, '样式回报要带元素自身的 backdrop-filter');
   assert.match(js, /backdropBefore: \(function \(\)/, '样式回报要带 ::before 的 backdrop-filter');
+  // Popups (menus, command palette, hover widgets) are frosted the same way, for the
+  // same reason: a menu can open a SUBMENU, which a filter on the menu itself would trap.
+  const popup = ruleFor('.monaco-workbench .context-view::before');
+  assert.match(popup, /backdrop-filter:\s*blur\(/, '下拉菜单要有高斯模糊');
+  assert.match(popup, /background-color:\s*rgba\(var\(--we-wb-glass-rgb\)/, '下拉菜单要有玻璃底色');
+  assert.match(popup, /z-index: -1/, '玻璃层必须在菜单内容之下');
+  assert.match(js, /setProperty\('--we-wb-menu-alpha'/, '运行时写入菜单玻璃不透明度');
+  assert.match(js, /Math\.max\(chromeAlpha, 0\.55\)/, '菜单不透明度要有可读性下限');
+  // The popups themselves must stay free of filters and stacking contexts.
+  const popupParts = ['.context-view', '.quick-input-widget', '.monaco-hover'];
+  for (const rule of rules) {
+    if (rule.selector.includes('::before')) continue;
+    if (!popupParts.some((p) => rule.selector.includes(p))) continue;
+    assert.ok(!/backdrop-filter/.test(rule.body), `${rule.selector} 不得有 backdrop-filter（会困住子菜单）`);
+    assert.ok(!/(^|[^-\w])filter:/.test(rule.body), `${rule.selector} 不得有 filter`);
+  }
   // The code surface: translucent, no filter of any kind.
   const editor = ruleFor('.monaco-workbench .part.editor > .content {');
   assert.match(editor, /background-color:\s*rgba\(var\(--we-wb-editor-rgb\)/, '代码区要有底衬');
