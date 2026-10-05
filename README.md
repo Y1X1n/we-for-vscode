@@ -2,6 +2,14 @@
 
 把**本机 Wallpaper Engine 的壁纸**渲染进 VS Code：既有一个液态玻璃风格的壁纸视图（面板），也能把壁纸**铺满整个窗口**——VS Code 的界面浮在壁纸之上。
 
+和"换张静态背景图"的扩展不同，这里是**真的把你的壁纸跑起来**：
+
+- **直接读你本机已安装的 Wallpaper Engine 库**（Steam 创意工坊的 36 张壁纸一次扫出来，无需导出、无需上传）；
+- **Video / Scene / Web 三种壁纸都支持**，Scene 与 Web 是**实时渲染**（WebGL 引擎），不是一张预览图；
+- **整窗铺满**时按"背景层"降配（1 画布像素/CSS 像素、24 fps），同一张壁纸只渲染一遍；
+- **磨砂玻璃**贯穿侧栏 / 标题栏 / 状态栏 / 终端面板 / 下拉菜单 / 命令面板，**代码区保持清晰不模糊**；
+- **可读性自动求解**：实测壁纸亮度后把代码区底衬解到 WCAG 4.5:1（亮壁纸实测 1.49:1 → 4.52:1），也可一键关掉、滑块说了算。
+
 > English: [README.en.md](README.en.md)
 
 ![壁纸铺满整个 VS Code](docs/screenshot-workbench.jpg)
@@ -72,7 +80,7 @@ code --install-extension y1x1n.we-for-vscode
 # 先完全关闭 VS Code（整窗背景层是文件级补丁，运行中安装会留给 webview 一个
 # "Could not register service worker" 报错）
 & "$env:LOCALAPPDATA\Programs\Microsoft VS Code\bin\code.cmd" `
-  --install-extension .\we-for-vscode-0.1.11.vsix --force
+  --install-extension .\we-for-vscode-0.1.12.vsix --force
 ```
 
 装好后启动 VS Code：扩展会自动激活，壁纸视图用 `Ctrl+Alt+W` 打开。
@@ -84,7 +92,7 @@ git clone https://github.com/Y1X1n/we-for-vscode.git
 cd we-for-vscode
 npm install
 npm run verify                        # tsc + node --test
-npx vsce package --no-dependencies    # 产出 we-for-vscode-0.1.11.vsix
+npx vsce package --no-dependencies    # 产出 we-for-vscode-0.1.12.vsix
 ```
 
 ### 打开“铺满整个窗口”

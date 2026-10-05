@@ -2,7 +2,7 @@
 
 All notable changes to this extension. The project follows [Semantic Versioning](https://semver.org/).
 
-## [0.1.11] — 2026-10-05
+## [0.1.12] — 2026-10-05
 
 - Frosted glass for the menubar's own dropdowns (File / Edit / …), which are
   `.menubar .menubar-menu-items-holder` rather than context views.

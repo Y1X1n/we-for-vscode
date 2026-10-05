@@ -2,6 +2,14 @@
 
 Render your **local Wallpaper Engine wallpapers** inside VS Code: a liquid-glass wallpaper view (the panel), and optionally the wallpaper **behind the entire window** — the whole UI floating on top of it.
 
+Unlike the "swap in a static background image" extensions, this one **actually runs your wallpapers**:
+
+- **Reads the Wallpaper Engine library already installed on your PC** (all 36 Steam Workshop items in one scan — no export, no upload);
+- **Video, Scene and Web wallpapers**; Scene and Web are **rendered live** by a WebGL engine, not shown as a preview still;
+- **Whole-window mode** is tuned as a background layer (1 canvas pixel per CSS pixel, 24 fps) and renders each wallpaper **once**;
+- **Frosted glass** across the sidebar, title bar, status bar, terminal panel, dropdown menus and the command palette — while the **code area stays sharp, never blurred**;
+- **Automatic readability**: the wallpaper layer measures its own pixels and solves the code surface's opacity to WCAG 4.5:1 (measured 1.49:1 → 4.52:1), and can be switched off so the sliders are the truth.
+
 > 中文版: [README.md](README.md)
 
 ![The wallpaper filling the whole VS Code window](docs/screenshot-workbench.jpg)
@@ -60,7 +68,7 @@ Render your **local Wallpaper Engine wallpapers** inside VS Code: a liquid-glass
 # installation, and installing while VS Code runs leaves the webview with a
 # "Could not register service worker" error.
 & "$env:LOCALAPPDATA\Programs\Microsoft VS Code\bin\code.cmd" `
-  --install-extension .\we-for-vscode-0.1.11.vsix --force
+  --install-extension .\we-for-vscode-0.1.12.vsix --force
 ```
 
 Start VS Code afterwards: the extension activates on startup, and `Ctrl+Alt+W` opens the wallpaper view.
@@ -72,7 +80,7 @@ git clone https://github.com/Y1X1n/we-for-vscode.git
 cd we-for-vscode
 npm install
 npm run verify                        # tsc + node --test
-npx vsce package --no-dependencies    # produces we-for-vscode-0.1.11.vsix
+npx vsce package --no-dependencies    # produces we-for-vscode-0.1.12.vsix
 ```
 
 ### Turning on "fill the whole window"
