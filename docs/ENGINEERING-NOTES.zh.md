@@ -44,12 +44,12 @@
 ```powershell
 npm install          # devDependencies：typescript + @types/*
 npm run compile      # tsc -> out/
-npm test             # 48 条测试
-npx @vscode/vsce package --allow-missing-repository --skip-license
-code --install-extension .\we-for-vscode-0.1.14.vsix --force
+npm test             # 135 条测试
+npx vsce package --no-dependencies   # 产出 we-for-vscode-<版本>.vsix（版本取自 package.json）
+code --install-extension .\we-for-vscode-0.1.16.vsix --force   # 版本号以 Release 里的文件名为准
 ```
 
-装好后会出现在**扩展视图**里（`local-poc.we-for-vscode`），并且**每个窗口都会激活**——这是方案 B 对所有窗口生效、命令/状态栏处处可用的前提。卸载：`code --uninstall-extension local-poc.we-for-vscode`。
+装好后会出现在**扩展视图**里（`y1x1n.we-for-vscode`），并且**每个窗口都会激活**——这是方案 B 对所有窗口生效、命令/状态栏处处可用的前提。卸载：`code --uninstall-extension y1x1n.we-for-vscode`。
 
 > **为什么 F5 开发宿主不够**：`--extensionDevelopmentPath` 加载的是"开发扩展"，它**不是已安装扩展**，所以 ① 不出现在扩展视图里，② **只存在于被启动的那一个窗口**。其它窗口没有它——我实测过其它窗口的 `exthost.log`，完全没有本扩展的激活记录。要在多窗口使用，只能走 VSIX 安装。
 

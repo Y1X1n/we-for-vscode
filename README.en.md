@@ -68,7 +68,7 @@ Unlike the "swap in a static background image" extensions, this one **actually r
 # installation, and installing while VS Code runs leaves the webview with a
 # "Could not register service worker" error.
 & "$env:LOCALAPPDATA\Programs\Microsoft VS Code\bin\code.cmd" `
-  --install-extension .\we-for-vscode-0.1.14.vsix --force
+  --install-extension .\we-for-vscode-0.1.16.vsix --force   # match the filename in the release
 ```
 
 Start VS Code afterwards: the extension activates on startup, and `Ctrl+Alt+W` opens the wallpaper view.
@@ -80,7 +80,7 @@ git clone https://github.com/Y1X1n/we-for-vscode.git
 cd we-for-vscode
 npm install
 npm run verify                        # tsc + node --test
-npx vsce package --no-dependencies    # produces we-for-vscode-0.1.14.vsix
+npx vsce package --no-dependencies    # produces we-for-vscode-<version>.vsix (version from package.json)
 ```
 
 ### Turning on "fill the whole window"
