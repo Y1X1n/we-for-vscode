@@ -42,6 +42,14 @@ export interface WallpaperProject {
   previewAbs: string | null;
   /** WE content rating verbatim: "Everyone" | "PG13" | "Mature" | null. */
   contentrating: string | null;
+  /**
+   * WE `tags` verbatim (e.g. Anime / Girls / Landscape / Music).
+   *
+   * This is what the picker's 分类 chips are built from. WE also stores internal
+   * pseudo-tags prefixed with `_` (`_approved`, `_contentrating`…) which are not
+   * categories and are dropped by readProject.
+   */
+  tags: string[];
   /** WE `schemecolor` as `rgb(r, g, b)`, for load-time placeholder colour. */
   schemeColor: string | null;
   /** Root this project came from: workshop | defaultprojects | myprojects. */
@@ -93,6 +101,11 @@ export async function readProject(dir: string): Promise<Omit<WallpaperProject, '
       file: declaredFile,
       preview: typeof o.preview === 'string' ? o.preview : null,
       contentrating: typeof o.contentrating === 'string' ? o.contentrating : null,
+      // `tags` is a plain string array in WE's project.json; the `_`-prefixed entries are
+      // WE internals and never a category a user would filter by.
+      tags: Array.isArray(o.tags)
+        ? [...new Set(o.tags.filter((t): t is string => typeof t === 'string' && t.length > 0 && !t.startsWith('_')))]
+        : [],
       schemeColor: schemeToCss(general?.properties?.schemecolor?.value),
     };
   } catch {

@@ -105,6 +105,8 @@ test('readProject: KINDS whitelist falls back to scene, unknown types included',
       assert.ok(proj, `${name} should parse`);
       assert.equal(proj.type, expectedType, `${name} type`);
       assert.equal(proj.id, name);
+      // Tags default to [] (not undefined): the picker's filter chips read this straight.
+      assert.deepEqual(proj.tags, [], `${name} tags 缺失时必须是 []`);
     }
 
     // Missing project.json and missing `file` are both skipped, like upstream.
@@ -115,6 +117,27 @@ test('readProject: KINDS whitelist falls back to scene, unknown types included',
     await mkdir(noFile, { recursive: true });
     await writeFile(join(noFile, 'project.json'), JSON.stringify({ title: 'x' }), 'utf8');
     assert.equal(await inventory.readProject(noFile), null);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('readProject: tags are the picker categories (WE internals and junk dropped)', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'we-tags-'));
+  try {
+    const p = join(dir, 'tagged');
+    await mkdir(p, { recursive: true });
+    await writeFile(
+      join(p, 'project.json'),
+      JSON.stringify({
+        file: 'scene.pkg',
+        title: 'Tagged',
+        // WE stores its own bookkeeping in the same array — those are not categories.
+        tags: ['Anime', '_approved', 'Girls', 'Anime', '', 42],
+      }),
+      'utf8');
+    const proj = await inventory.readProject(p);
+    assert.deepEqual(proj.tags, ['Anime', 'Girls'], '只保留真实标签，去重且剔除 _ 前缀/非字符串');
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

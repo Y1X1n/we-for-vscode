@@ -183,6 +183,21 @@ export class MediaServer {
    * right now?" that does not need a screenshot.
    */
   private lastContrast: unknown = null;
+  /**
+   * Wallpaper timeline from a patched window (video boot / metadata / first frame), each
+   * stage carrying `performance.now()` — milliseconds since that document started
+   * loading. Own slot because it is the only measurement of the user-visible startup
+   * ("when did the wallpaper actually appear?") taken inside the renderer.
+   */
+  private lastVideo: unknown = null;
+  /**
+   * Every wallpaper-timeline report of this session, oldest first (bounded).
+   *
+   * `lastVideo` alone is not enough to check the startup path: the first frame overwrites
+   * the poster stage within a fraction of a second, so a reader that polls slower than
+   * that sees only "playing" and cannot tell whether the poster ever appeared.
+   */
+  private videoTimeline: unknown[] = [];
   private viewOpacity = 1;
   private viewScrim = 0.35;
   /** Readability policy: the page measures its own pixels, this is the user's mode. */
@@ -580,6 +595,13 @@ export class MediaServer {
             this.lastContrast = parsed.contrast;
           } else if (parsed && typeof parsed === 'object' && 'scene' in parsed) {
             this.lastScene = parsed.scene;
+          } else if (parsed && typeof parsed === 'object' && 'video' in parsed) {
+            // Wallpaper timeline (boot → poster → metadata → first frame), with the ms
+            // stamp: the last report answers "is it on screen?", the list answers "when
+            // did each step happen?".
+            this.lastVideo = parsed.video;
+            this.videoTimeline.push(parsed.video);
+            if (this.videoTimeline.length > 16) this.videoTimeline.shift();
           } else {
             this.lastProbe = parsed;
           }
@@ -591,7 +613,7 @@ export class MediaServer {
       return;
     }
     res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' });
-    res.end(JSON.stringify({ ...(typeof this.lastProbe === 'object' && this.lastProbe ? this.lastProbe : {}), scene: this.lastScene, contrast: this.lastContrast }));
+    res.end(JSON.stringify({ ...(typeof this.lastProbe === 'object' && this.lastProbe ? this.lastProbe : {}), scene: this.lastScene, contrast: this.lastContrast, video: this.lastVideo, videoTimeline: this.videoTimeline }));
     return;
     }
 

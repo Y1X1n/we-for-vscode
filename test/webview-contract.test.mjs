@@ -107,6 +107,38 @@ test('every id main.mjs touches exists in index.html', () => {
   assert.deepEqual(missing, [], `main.mjs 引用了 index.html 中不存在的 id：${missing.join(', ')}`);
 });
 
+test('every slider has a default, a unit and its own reset button', () => {
+  const sliderKeys = [...mainSrc.matchAll(/^\s*\['(\w+)',\s*'[\w-]+',\s*'[\w-]+'\],?$/gm)].map((m) => m[1]);
+  assert.ok(sliderKeys.length >= 9, `SLIDERS 应解析出 9 个以上滑块，实际 ${sliderKeys.length}`);
+
+  const literalKeys = (name) => {
+    const block = new RegExp(`const ${name} = \\{([\\s\\S]*?)\\n\\};`).exec(mainSrc);
+    assert.ok(block, `main.mjs 里找不到 ${name} 字面量`);
+    return new Set([...block[1].matchAll(/^\s*([\w-]+):/gm)].map((m) => m[1]));
+  };
+  const defaults = literalKeys('DEFAULTS');
+  const units = literalKeys('UNITS');
+
+  const noDefault = sliderKeys.filter((k) => !defaults.has(k));
+  assert.deepEqual(noDefault, [], `这些滑块没进 DEFAULTS，「恢复默认」会写成 undefined：${noDefault.join(', ')}`);
+  const noUnit = sliderKeys.filter((k) => !units.has(k));
+  assert.deepEqual(noUnit, [], `这些滑块没进 UNITS，读数会退回原始小数：${noUnit.join(', ')}`);
+
+  // The per-row reset is markup, tied to the setting by data-reset — a row without it
+  // simply has no reset, and nothing else would notice.
+  const noReset = sliderKeys.filter((k) => !html.includes(`data-reset="${k}"`));
+  assert.deepEqual(noReset, [], `这些滑块缺少行内「恢复默认」按钮：${noReset.join(', ')}`);
+  const unknownReset = [...html.matchAll(/data-reset="([^"]+)"/g)]
+    .map((m) => m[1])
+    .filter((k) => !defaults.has(k));
+  assert.deepEqual(unknownReset, [], `data-reset 指向 DEFAULTS 里没有的键：${unknownReset.join(', ')}`);
+
+  // The grouping is the point of the settings page — three of the keys only do anything
+  // with the whole-window patch on, and they used to look exactly as global as the rest.
+  const groups = (html.match(/class="we-group"/g) || []).length;
+  assert.ok(groups >= 4, `设置页应分成 4 组以上，实际 ${groups}`);
+});
+
 test('glass.mjs emits exactly the CSS variables style.css consumes', () => {
   const vars = buildGlassVars({}, 'dark');
   const produced = new Set(Object.keys(vars));
@@ -213,6 +245,28 @@ test('wallpaper selection happens inside the panel, not in a QuickPick', () => {
   assert.match(styleSrc, /\.we-controls\[hidden\]\s*\{\s*display: none;/, '打开壁纸库时滑块必须真的隐藏（UA 的 [hidden] 敌不过 display:flex）');
 });
 
+test('the picker can filter by category (type / tags / source / rating)', () => {
+  assert.match(html, /id="lib-filters"/, '壁纸库要有筛选条');
+  assert.match(mainSrc, /const FILTER_ROWS = \[/, 'main.mjs 必须定义筛选分组');
+  for (const group of ['type', 'tag', 'source', 'rating']) {
+    assert.ok(mainSrc.includes(`'${group}'`), `筛选分组缺少 ${group}`);
+  }
+  // One predicate for every group: search and filters have to compose, not fight.
+  assert.match(mainSrc, /function filterMatch\(item, group, value\)/, '筛选必须走同一个判定函数');
+  assert.match(mainSrc, /function libraryMatches\(item, query = ''\)[\s\S]{0,300}Object\.entries\(libFilter\)/, '搜索与筛选必须同时生效');
+  assert.match(mainSrc, /\(item\.tags \|\| \[\]\)\.join\(' '\)/, '搜索要包含标签（只有一张壁纸的标签没有 chip，也要能搜到）');
+  assert.match(mainSrc, /chip\.dataset\.group = group;[\s\S]{0,140}chip\.dataset\.value = value;/, 'chip 必须带 group/value');
+  assert.match(mainSrc, /chip\.setAttribute\('aria-pressed'/, 'chip 要报出选中状态（键盘/读屏可用）');
+  assert.match(mainSrc, /function renderFilters\(\)/, '必须有渲染 chip 的函数');
+  // Counts with the OTHER groups applied: otherwise a chip promises wallpapers the
+  // current combination cannot show.
+  assert.match(mainSrc, /function filterPool\(items, group\)[\s\S]{0,220}others\.every/, 'chip 计数要考虑其它分组的当前值');
+  assert.match(mainSrc, /if \(!available\.has\(libFilter\[group\]\)\) libFilter\[group\] = 'all';/, '重扫后失效的筛选要自动复位，否则列表静默变空');
+  assert.match(mainSrc, /没有符合当前筛选的壁纸/, '筛到空集要有专门的空状态文案');
+  assert.match(styleSrc, /\.we-chip--on \{/, '选中的 chip 要有可见状态');
+  assert.match(styleSrc, /\.we-filter-row \{[\s\S]{0,240}overflow-x: auto;/, '标签行要能横向滚动（30 个标签不能把列表挤出去）');
+});
+
 test('only one surface renders a Scene/Web wallpaper live (the panel obeys the host)', () => {
   // Two engine instances for the same wallpaper cost a second full render on the
   // renderer main thread — measured ~4% of one core per instance, sharing the thread
@@ -261,7 +315,16 @@ test('every browser module parses (a syntax error here kills the whole panel)', 
 test('extension manifest keeps its activation and capability declarations in sync', () => {
   const pkg = JSON.parse(read('package.json'));
   // Activation must cover the status bar item created on activate().
-  assert.ok(pkg.activationEvents.includes('onStartupFinished'));
+  //
+  // It is `*`, not `onStartupFinished`, and that is a measured decision: the patched
+  // page can do nothing until this extension binds the loopback port, and
+  // `onStartupFinished` fires ~2.9 s after the extension host starts (the workbench has
+  // to finish coming up first). The measured effect is in CHANGELOG 0.1.16; the price is
+  // a few config reads and one status() during startup, which the [perf] lines report.
+  assert.ok(
+    pkg.activationEvents.includes('*'),
+    '必须在扩展宿主启动时就激活：壁纸要等 onStartupFinished 的话要晚 ~2.9 秒才出现',
+  );
   // Remote/virtual workspaces are declared unsupported: local disk + loopback server.
   assert.equal(pkg.capabilities.virtualWorkspaces.supported, false);
   assert.equal(pkg.capabilities.untrustedWorkspaces.supported, 'limited');

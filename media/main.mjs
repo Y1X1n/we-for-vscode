@@ -66,9 +66,55 @@ const SLIDERS = [
   ['saturate', 'in-saturate', 'out-saturate'],
 ];
 
+/**
+ * Defaults and display units — one table each, because both are read from three places
+ * (the read-outs, the per-row reset and 全部恢复默认).
+ *
+ * The defaults mirror the host manifest's `weWallpaper.*` defaults, so 「恢复默认」 means
+ * the same thing on both sides of the webview. UNITS is what turns a raw slider number
+ * into something readable: every read-out used to be `toFixed(2)`, which printed
+ * "16.00" for a blur radius measured in px and "1.00" for an opacity.
+ */
+const DEFAULTS = {
+  blur: 16,
+  saturate: 1.3,
+  wallpaperOpacity: 1,
+  scrim: 0.35,
+  border: 1,
+  glassAlpha: 0.45,
+  chromeGlassAlpha: 0.45,
+  editorGlassAlpha: 0.72,
+  panelWidth: 420,
+  glassColor: '#101014',
+};
+
+const UNITS = {
+  blur: 'px',
+  border: 'px',
+  panelWidth: 'px',
+  saturate: 'x',
+  wallpaperOpacity: '%',
+  scrim: '%',
+  glassAlpha: '%',
+  chromeGlassAlpha: '%',
+  editorGlassAlpha: '%',
+};
+
+/** "16 px" / "45%" / "1.30×" — the one place a control value becomes text. */
+function formatValue(key, value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return String(value ?? '');
+  if (UNITS[key] === 'px') return `${Math.round(n)} px`;
+  if (UNITS[key] === '%') return `${Math.round(n * 100)}%`;
+  if (UNITS[key] === 'x') return `${n.toFixed(2)}×`;
+  return String(value ?? '');
+}
+
 const state = Object.assign(
   {
-    settings: { blur: 16, saturate: 1.3, wallpaperOpacity: 1, scrim: 0.35, border: 1, glassAlpha: 0.45, glassColor: '#101014', panelWidth: 420, autoContrast: 'balanced', chromeGlassAlpha: 0.45, editorGlassAlpha: 0.72 },
+    // DEFAULTS is the panel's own copy of the manifest defaults (see above) — keeping the
+    // first-run values in one place is what makes 全部恢复默认 exact.
+    settings: { ...DEFAULTS, autoContrast: 'balanced' },
     item: null,
     paused: false,
     visible: true,
@@ -188,7 +234,9 @@ function applyGlass() {
   if (out) {
     const user = Number(state.settings?.scrim) || 0;
     const shown = effective.scrim;
-    out.textContent = contrastFloor.scrim > user ? `${shown.toFixed(2)}（自动）` : shown.toFixed(2);
+    // Percent like every other alpha read-out, and the floor is called out: the slider
+    // then shows a number the user did not set.
+    out.textContent = contrastFloor.scrim > user ? `${formatValue('scrim', shown)}（自动）` : formatValue('scrim', shown);
   }
 }
 
@@ -198,10 +246,34 @@ function syncInputs() {
     const out = document.getElementById(outId);
     if (!input) continue;
     input.value = String(state.settings[key]);
-    if (out && key !== 'scrim') out.textContent = key === 'panelWidth' ? `${Math.round(state.settings[key])}px` : String(Number(state.settings[key]).toFixed(2));
+    // scrim keeps its own read-out: the readability floor can raise it above what the
+    // slider says, and that number has to admit it (see applyGlass).
+    if (out && key !== 'scrim') out.textContent = formatValue(key, state.settings[key]);
+    syncFill(input);
+    syncReset(key);
   }
   const color = document.getElementById('in-glassColor');
   if (color) color.value = state.settings.glassColor;
+  const colorOut = document.getElementById('out-glassColor');
+  if (colorOut) colorOut.textContent = String(state.settings.glassColor ?? '');
+  syncReset('glassColor');
+}
+
+/** Track fill: the range is painted with a gradient whose stop is the value's position. */
+function syncFill(input) {
+  const min = Number(input.min) || 0;
+  const max = Number(input.max) || 1;
+  const value = Number(input.value);
+  const pct = max > min ? ((value - min) / (max - min)) * 100 : 0;
+  input.style.setProperty('--fill', `${Math.max(0, Math.min(100, pct)).toFixed(2)}%`);
+}
+
+/** A reset button is useless while the value already IS the default — hide it. */
+function syncReset(key) {
+  const btn = document.querySelector(`[data-reset="${key}"]`);
+  if (!btn) return;
+  btn.disabled = String(state.settings[key]) === String(DEFAULTS[key]);
+  btn.title = `恢复默认（${formatValue(key, DEFAULTS[key])}）`;
 }
 
 // ── the <video> element ─────────────────────────────────────────────────────
@@ -512,10 +584,140 @@ function setLibraryOpen(open) {
   }
 }
 
-function libraryMatches(item, query) {
+// ── category filters ────────────────────────────────────────────────────────
+//
+// The inventory carries four things worth filtering on, and they answer different
+// questions: 类型 (what it is), 标签 (WE's own categories — Anime / Girls / Landscape…),
+// 来源 (workshop vs my projects vs the bundled defaults) and 分级 (content rating).
+// 类型 and 标签 are what one actually hunts by, so each gets its own row; 来源 and 分级
+// share the last one.
+//
+// The filter state is deliberately NOT persisted across panel rebuilds: reopening the
+// picker on a stale "Anime only" filter reads as "my workshop wallpapers are gone".
+const FILTER_ROWS = [
+  [['type', '类型']],
+  [['tag', '标签']],
+  [
+    ['source', '来源'],
+    ['rating', '分级'],
+  ],
+];
+
+const FILTER_LABELS = {
+  type: { all: '全部', video: '视频', scene: '场景', web: '网页', application: '应用' },
+  source: { all: '全部', workshop: '创意工坊', myprojects: '我的项目', defaultprojects: '官方默认' },
+  rating: { all: '全部', Everyone: '全年龄', PG13: '13+', Mature: '成人' },
+};
+
+/** Fixed display order per group; tags have none and are ordered by count. */
+const FILTER_ORDER = {
+  type: ['video', 'scene', 'web', 'application'],
+  source: ['workshop', 'myprojects', 'defaultprojects'],
+  rating: ['Everyone', 'PG13', 'Mature'],
+};
+
+let libFilter = { type: 'all', tag: 'all', source: 'all', rating: 'all' };
+
+/** The values one item carries for a filter group ([] when it has none). */
+function filterValuesOf(item, group) {
+  if (group === 'type') return [String(item.type || '').toLowerCase()].filter(Boolean);
+  if (group === 'tag') return Array.isArray(item.tags) ? item.tags : [];
+  if (group === 'source') return [item.source].filter(Boolean);
+  if (group === 'rating') return [item.contentrating].filter(Boolean);
+  return [];
+}
+
+function filterMatch(item, group, value) {
+  return value === 'all' || filterValuesOf(item, group).includes(value);
+}
+
+function libraryMatches(item, query = '') {
+  for (const [group, value] of Object.entries(libFilter)) {
+    if (!filterMatch(item, group, value)) return false;
+  }
   if (!query) return true;
-  const hay = `${item.title || ''} ${item.id || ''} ${item.type || ''} ${item.renderMode || ''}`.toLowerCase();
+  // Tags belong in the haystack: "anime" in the search box should find what the 标签 row
+  // would, and a tag that has no chip yet (single-item tag) is still reachable this way.
+  const hay = `${item.title || ''} ${item.id || ''} ${item.type || ''} ${item.renderMode || ''} ${(item.tags || []).join(' ')}`.toLowerCase();
   return hay.includes(query);
+}
+
+/**
+ * Chip counts are computed with the OTHER groups applied: a count that ignored them
+ * would promise wallpapers the current combination cannot actually show.
+ */
+function filterPool(items, group) {
+  const others = Object.entries(libFilter).filter(([g]) => g !== group);
+  const pool = items.filter((i) => others.every(([g, v]) => filterMatch(i, g, v)));
+  const counts = new Map();
+  for (const item of pool) {
+    for (const value of filterValuesOf(item, group)) counts.set(value, (counts.get(value) || 0) + 1);
+  }
+  return { pool, counts };
+}
+
+function filterChip(group, value, label, count, active) {
+  const chip = document.createElement('button');
+  chip.type = 'button';
+  chip.className = active ? 'we-chip we-chip--on' : 'we-chip';
+  chip.dataset.group = group;
+  chip.dataset.value = value;
+  chip.setAttribute('aria-pressed', active ? 'true' : 'false');
+  chip.title = count === null ? label : `${label}（${count} 张）`;
+  const name = document.createElement('span');
+  name.textContent = label;
+  chip.append(name);
+  if (count !== null) {
+    const badge = document.createElement('span');
+    badge.className = 'we-chip-count';
+    badge.textContent = String(count);
+    chip.append(badge);
+  }
+  return chip;
+}
+
+/** Rebuild the chip rows. Values come from the inventory, so the chips always match it. */
+function renderFilters() {
+  const host = document.getElementById('lib-filters');
+  if (!host) return;
+  const items = state.inventory?.items || [];
+  if (!items.length) {
+    host.replaceChildren();
+    return;
+  }
+  const rows = [];
+  for (const groups of FILTER_ROWS) {
+    const row = document.createElement('div');
+    row.className = 'we-filter-row';
+    groups.forEach(([group, label], index) => {
+      if (index > 0) {
+        const sep = document.createElement('span');
+        sep.className = 'we-filter-sep';
+        row.append(sep);
+      }
+      const title = document.createElement('span');
+      title.className = 'we-filter-label';
+      title.textContent = label;
+      row.append(title);
+
+      const { pool, counts } = filterPool(items, group);
+      // A SELECTED value is always rendered, even at count 0: faceted counts hide the
+      // values that would yield nothing, and hiding the chip the user is currently
+      // filtered by would leave them with no way to switch it off.
+      const values = FILTER_ORDER[group]
+        ? FILTER_ORDER[group].filter((v) => counts.has(v) || libFilter[group] === v)
+        : [...new Set([...counts.keys(), ...(libFilter[group] === 'all' ? [] : [libFilter[group]])])].sort(
+            (a, b) => (counts.get(b) || 0) - (counts.get(a) || 0) || a.localeCompare(b),
+          );
+      const labels = FILTER_LABELS[group] || {};
+      row.append(filterChip(group, 'all', '全部', pool.length, libFilter[group] === 'all'));
+      for (const value of values) {
+        row.append(filterChip(group, value, labels[value] || value, counts.get(value) || 0, libFilter[group] === value));
+      }
+    });
+    rows.push(row);
+  }
+  host.replaceChildren(...rows);
 }
 
 function libraryRow(item, selected) {
@@ -577,6 +779,14 @@ function markCurrentLibraryRow(id) {
 function renderLibrary() {
   if (!el.libList) return;
   const items = state.inventory?.items || [];
+  // A rescan can drop the wallpaper a chip was filtering by. Reset those groups first —
+  // otherwise the list goes empty with a chip that no longer exists to click off.
+  for (const group of Object.keys(libFilter)) {
+    if (libFilter[group] === 'all') continue;
+    const available = new Set(items.flatMap((i) => filterValuesOf(i, group)));
+    if (!available.has(libFilter[group])) libFilter[group] = 'all';
+  }
+  renderFilters();
   const query = (el.libSearch?.value || '').trim().toLowerCase();
   const shown = items.filter((i) => libraryMatches(i, query));
   el.libList.replaceChildren(...shown.map((i) => libraryRow(i, i.id === state.item?.id)));
@@ -584,13 +794,28 @@ function renderLibrary() {
     el.libEmpty.hidden = shown.length > 0;
     el.libEmpty.textContent = !items.length
       ? '正在扫描本地壁纸库…'
-      : `没有匹配「${el.libSearch?.value || ''}」的壁纸`;
+      : query
+        ? `没有匹配「${el.libSearch?.value || ''}」的壁纸`
+        : '没有符合当前筛选的壁纸';
   }
 }
 
 el.pick?.addEventListener('click', () => setLibraryOpen(!libraryOpen));
 el.libClose?.addEventListener('click', () => setLibraryOpen(false));
 el.libSearch?.addEventListener('input', () => renderLibrary());
+
+// One delegated handler for every chip. The chips are rebuilt by renderLibrary, so the
+// clicked button is gone by the time focus would return to it — put the keyboard back on
+// the equivalent chip, or the next Tab restarts from the top of the panel.
+document.getElementById('lib-filters')?.addEventListener('click', (event) => {
+  const chip = event.target instanceof Element ? event.target.closest('.we-chip') : null;
+  if (!chip) return;
+  const { group, value } = chip.dataset;
+  if (!group || !value) return;
+  libFilter[group] = value;
+  renderLibrary();
+  document.querySelector(`.we-chip[data-group="${group}"][data-value="${value}"]`)?.focus();
+});
 
 // ── controls ────────────────────────────────────────────────────────────────
 
@@ -618,28 +843,47 @@ function pushSetting(key, value) {
   }, 150);
 }
 
+/**
+ * The single write path for a control: slider, colour picker, per-row reset, 恢复默认.
+ *
+ * The limits fall back to the input's own min/max — a slider whose key is missing from
+ * LIMITS used to throw on `clamp(raw, ...undefined)`, which killed the rest of the
+ * handler: the slider moved, nothing was written, and it looked like a slider that
+ * simply does not work (侧边栏磨砂 and 代码区底衬 until 0.1.7).
+ *
+ * `immediate` posts at once instead of riding the shared debounce — 「全部恢复默认」
+ * would otherwise lose nine of its ten writes to `settingTimer`.
+ */
+function commitSetting(key, value, input, immediate = false) {
+  try {
+    if (key === 'glassColor') {
+      state.settings.glassColor = String(value);
+    } else {
+      const limits = LIMITS[key] || [Number(input?.min) || 0, Number(input?.max) || 1];
+      const raw = Number(value);
+      state.settings[key] =
+        key === 'border' || key === 'blur' || key === 'panelWidth' ? Math.round(raw) : clamp(raw, limits[0], limits[1]);
+    }
+    applyGlass();
+    syncInputs();
+    if (immediate) pushSettingNow(key, state.settings[key]);
+    else pushSetting(key, state.settings[key]);
+  } catch (err) {
+    log('error', `设置 ${key} 处理失败：${err && err.message ? err.message : String(err)}`);
+  }
+}
+
+function pushSettingNow(key, value) {
+  pendingSettings.set(key, value);
+  clearTimeout(settingTimer);
+  vscode.postMessage({ type: 'setting', key, value });
+  persist();
+}
+
 for (const [key, inputId] of SLIDERS) {
   const input = document.getElementById(inputId);
   if (!input) continue;
-  input.addEventListener('input', () => {
-    // The limits fall back to the input's own min/max: a slider whose key is missing
-    // from LIMITS used to throw on `clamp(raw, ...undefined)`, which killed the rest of
-    // this handler — the slider moved, nothing was written, and it looked like a slider
-    // that simply does not work (that was 侧边栏磨砂 and 代码区底衬 until 0.1.7).
-    const limits = LIMITS[key] || [Number(input.min) || 0, Number(input.max) || 1];
-    try {
-      const raw = Number(input.value);
-      state.settings[key] =
-        key === 'border' || key === 'blur' || key === 'panelWidth'
-          ? Math.round(raw)
-          : clamp(raw, limits[0], limits[1]);
-      applyGlass();
-      syncInputs();
-      pushSetting(key, state.settings[key]);
-    } catch (err) {
-      log('error', `滑块 ${key} 处理失败：${err && err.message ? err.message : String(err)}`);
-    }
-  });
+  input.addEventListener('input', () => commitSetting(key, input.value, input));
 }
 
 // Anything thrown at the top level of the panel used to be invisible: the panel simply
@@ -649,11 +893,9 @@ window.addEventListener('unhandledrejection', (e) =>
   log('error', `面板 Promise 异常：${e.reason && e.reason.message ? e.reason.message : String(e.reason)}`),
 );
 
-document.getElementById('in-glassColor')?.addEventListener('input', (e) => {
-  state.settings.glassColor = e.target.value;
-  applyGlass();
-  pushSetting('glassColor', state.settings.glassColor);
-});
+document.getElementById('in-glassColor')?.addEventListener('input', (event) =>
+  commitSetting('glassColor', event.target.value, event.target),
+);
 
 // 「立即生效」: settings already reach the windows on their own (the host pushes, and
 // the patched page applies it from the /events stream), so this button is the explicit
@@ -675,6 +917,34 @@ applyBtn?.addEventListener('click', () => {
     applyBtn.disabled = false;
     if (applyHint) applyHint.hidden = true;
   }, 2600);
+});
+
+// ── reset ───────────────────────────────────────────────────────────────────
+//
+// One delegated handler covers every per-row ↺: rows are static markup, but delegation
+// keeps the wiring in one place and makes the colour row (a string value, not a number)
+// no special case. The button lives OUTSIDE the <label>, so clicking it cannot also
+// nudge the slider it belongs to.
+document.querySelector('.we-controls')?.addEventListener('click', (event) => {
+  const btn = event.target instanceof Element ? event.target.closest('[data-reset]') : null;
+  if (!btn) return;
+  const key = btn.dataset.reset;
+  if (!key || !(key in DEFAULTS)) return;
+  commitSetting(key, DEFAULTS[key], document.getElementById(`in-${key}`));
+});
+
+document.getElementById('btn-reset-all')?.addEventListener('click', () => {
+  // Immediate per key: the debounced path shares one timer, so a loop over ten keys
+  // would post only the last one and quietly leave nine settings changed.
+  for (const [key] of SLIDERS) commitSetting(key, DEFAULTS[key], document.getElementById(`in-${key}`), true);
+  commitSetting('glassColor', DEFAULTS.glassColor, document.getElementById('in-glassColor'), true);
+  if (applyHint) {
+    applyHint.hidden = false;
+    applyHint.textContent = '已恢复默认值';
+    window.setTimeout(() => {
+      applyHint.hidden = true;
+    }, 2600);
+  }
 });
 
 el.play?.addEventListener('click', () => {

@@ -63,14 +63,21 @@ test('every slider key, input and output exists in the markup', () => {
   }
 });
 
-test('the slider handler cannot throw on an unknown key, and reports if it does', () => {
+test('the settings write path cannot throw on an unknown key, and reports if it does', () => {
   const main = read('media/main.mjs');
   assert.ok(
     !/clamp\(raw, \.\.\.LIMITS\[key\]\)/.test(main),
     '不得直接展开 LIMITS[key]（缺失即抛错）',
   );
-  assert.match(main, /const limits = LIMITS\[key\] \|\| \[Number\(input\.min\)/, '缺失时要退回控件自身的 min/max');
-  assert.match(main, /catch \(err\) \{[\s\S]*?滑块 \$\{key\} 处理失败/, '处理失败要写进扩展日志，而不是静默');
+  // Sliders, the colour picker, the per-row ↺ and 全部恢复默认 all funnel through
+  // commitSetting now, so these two guarantees have to hold there — a regression in the
+  // shared path would take every control down at once.
+  assert.match(main, /function commitSetting\(key, value, input, immediate = false\)/, '必须只有一个写入路径');
+  assert.match(main, /const limits = LIMITS\[key\] \|\| \[Number\(input\?\.min\)/, '缺失时要退回控件自身的 min/max');
+  assert.match(main, /catch \(err\) \{[\s\S]*?设置 \$\{key\} 处理失败/, '处理失败要写进扩展日志，而不是静默');
+  // Resetting ten keys through the debounced path would post only the last one.
+  assert.match(main, /function pushSettingNow\(key, value\)/, '恢复全部需要即时写入的通道');
+  assert.match(main, /commitSetting\(key, DEFAULTS\[key\], document\.getElementById\(`in-\$\{key\}`\), true\)/, '全部恢复默认必须逐键即时写入');
   // A top-level throw used to leave the panel half-dead with a clean log.
   assert.match(main, /addEventListener\('error'/, '面板要上报 window error');
   assert.match(main, /addEventListener\('unhandledrejection'/, '面板要上报未处理的 Promise 异常');

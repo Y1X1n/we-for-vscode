@@ -141,8 +141,8 @@ test('the workbench background layer is told what kind of element it needs', asy
 
   assert.deepEqual(
     service.workbenchTargetFor({ renderMode: 'video', media: 'http://x/m/v', preview: 'http://x/m/p' }),
-    { url: 'http://x/m/v', kind: 'video' },
-    '视频走 video',
+    { url: 'http://x/m/v', kind: 'video', still: 'http://x/m/p' },
+    '视频走 video，预览随行当 poster（首帧出来之前那层是黑的）',
   );
   assert.deepEqual(
     service.workbenchTargetFor({
@@ -195,6 +195,7 @@ test('the whole-window live scene is opt-in, and carries its still as a fallback
   assert.deepEqual(service.workbenchTargetFor({ renderMode: 'video', media: 'http://x/m/v' }, true), {
     url: 'http://x/m/v',
     kind: 'video',
+    still: null,
   });
 });
 
@@ -228,9 +229,19 @@ test('liveSurface=panel hands the whole-window layer the still instead of a seco
   assert.deepEqual(service.workbenchTargetFor(web, true, 'panel'), { url: 'http://x/m/p', kind: 'image' });
   // A video wallpaper is cheap to play in both places and is NOT gated by the surface:
   // there is no second engine instance to avoid, only a second <video> element.
-  assert.deepEqual(service.workbenchTargetFor({ renderMode: 'video', media: 'http://x/m/v' }, true, 'panel'), {
+  //
+  // It carries its preview as the layer's poster (null when the project has none): a big
+  // wallpaper needs ~0.7 s to produce a first frame, and until then the whole-window
+  // layer is black — which is most of what "startup is slow" looks like.
+  assert.deepEqual(service.workbenchTargetFor({ renderMode: 'video', media: 'http://x/m/v', preview: null }, true, 'panel'), {
     url: 'http://x/m/v',
     kind: 'video',
+    still: null,
+  });
+  assert.deepEqual(service.workbenchTargetFor({ renderMode: 'video', media: 'http://x/m/v', preview: 'http://x/m/p' }, true, 'panel'), {
+    url: 'http://x/m/v',
+    kind: 'video',
+    still: 'http://x/m/p',
   });
 });
 
