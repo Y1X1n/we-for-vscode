@@ -15,9 +15,9 @@
  */
 
 import assert from 'node:assert/strict';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import test from 'node:test';
 
 import {
@@ -51,8 +51,9 @@ const CHECKSUM_KEY = 'vs/code/electron-browser/workbench/workbench.html';
 /** Locate a real VS Code app root, or null. Never modified — only read/copied. */
 function findRealAppRoot() {
   const candidates = [process.env.WE_VSCODE_APP_ROOT, 'C:\\Program Files\\Microsoft VS Code\\resources\\app', join(process.env.LOCALAPPDATA || '', 'Programs', 'Microsoft VS Code', 'resources', 'app')];
-  // This box has a versioned install dir (E:\Microsoft VS Code\<commit>\resources\app).
-  for (const base of ['E:\\Microsoft VS Code', 'C:\\Program Files\\Microsoft VS Code']) {
+  // Installs keep the app under <install root>\<commit>\resources\app. The user install
+  // is the one this box runs since 2026-10-09 (the old E: install was retired then).
+  for (const base of [join(process.env.LOCALAPPDATA || '', 'Programs', 'Microsoft VS Code'), 'C:\\Program Files\\Microsoft VS Code']) {
     try {
       for (const entry of readdirSync(base)) candidates.push(join(base, entry, 'resources', 'app'));
     } catch {
@@ -386,6 +387,24 @@ test('generated CSS/JS carry the load-bearing rules', () => {
   assert.equal((css.match(/^html:not\(\.we-wb-fallback\)/gm) || []).length >= 5, true, '透明规则必须全部限定在 :not(.we-wb-fallback) 中');
   assert.match(css, /html\.we-wb-fallback #we-workbench-wallpaper \{\s*\n\tdisplay: none;/);
 
+  // ── VS Code 1.141 "modern UI / floating panels" ──────────────────────────────
+  // The regression this guards: the workbench writes an OPAQUE shell colour into
+  // --modern-ui-shell-background at runtime (inline, so it beats a plain stylesheet
+  // declaration) and paints it on `.monaco-workbench.floating-panels` AND on
+  // `.monaco-workbench.floating-panels > .monaco-grid-view`. The root was already in
+  // the transparent list; the grid view was not, so the wallpaper layer (z-index:-1)
+  // sat behind an opaque sheet while every computed style still read transparent.
+  assert.match(css, /--modern-ui-shell-background: transparent !important;/, '1.141 的 shell 变量必须被压成透明（它是行内设置，非 !important 压不住）');
+  assert.match(css, /html:not\(\.we-wb-fallback\) \.monaco-workbench > \.monaco-grid-view,[\s\S]{0,240}background-color: transparent !important;/, '1.141 的布局容器必须显式透明');
+  assert.match(css, /\.monaco-workbench\.floating-panels > \.monaco-grid-view/, 'floating-panels 变体也要覆盖');
+  assert.match(css, /--vscode-surface-background: transparent !important;/, '1.141 浮动面板卡片用 surface.background 填充（!important），必须透明');
+  // 1.141 moved the tab strip: the group header carries `tabs` itself and the strip
+  // lives in .tabs-and-actions-container > .tabs-container (the old `.title .tabs`
+  // descendant selector stopped matching — the probe reported it MISSING).
+  assert.ok(css.includes('.editor-group-container > .title.tabs'), '1.141 的 .title.tabs 要覆盖');
+  assert.ok(css.includes('.monaco-workbench .part.editor .tabs-and-actions-container'), '1.141 的标签条容器要覆盖');
+  assert.ok(css.includes('.monaco-workbench .part.editor .tabs-container'), '1.141 的 .tabs-container 要覆盖');
+
   const js = buildJs('http://127.0.0.1:39127');
   assert.match(js, /we-workbench-video/);
   assert.match(js, /addEventListener\('error'/);
@@ -405,6 +424,14 @@ test('generated CSS/JS carry the load-bearing rules', () => {
   assert.match(js, /reportStyles\(\);/, '探针函数必须被调用');
   assert.match(js, /text\/plain;charset=UTF-8/, '探针 POST 必须避免触发 CORS 预检');
   assert.match(js, /inlineBg/, 'probe 要顺带回报 VS Code 写进行内样式的那个颜色');
+  // The probe must also answer "is the wallpaper layer itself on screen?" — the 1.141
+  // failure looked green everywhere else (patch written, glass applied, engine mounted,
+  // contrast measuring bright pixels) while the layer was covered by an opaque sheet.
+  assert.match(js, /'#we-workbench-wallpaper'/, 'probe 必须回报壁纸层自身');
+  assert.match(js, /'#we-workbench-scene > canvas'/, 'probe 必须回报实时 Scene 画布');
+  assert.match(js, /'\.monaco-workbench > \.monaco-grid-view'/, 'probe 必须回报 1.141 的布局容器');
+  assert.match(js, /--modern-ui-shell-background/, 'probe 必须回报 1.141 的 shell 变量值');
+  assert.match(js, /disp: cs\.display,[\s\S]{0,120}vis: cs\.visibility,[\s\S]{0,120}op: cs\.opacity,[\s\S]{0,80}z: cs\.zIndex/, 'probe 必须回报 display/visibility/opacity/z-index');
   assert.doesNotMatch(js, /<\/script/i, '内联内容不得提前闭合脚本标签');
 });
 
@@ -495,9 +522,10 @@ test('a surviving patch whose checksum table changed is stripped in place', asyn
 });
 
 test('state files are per installation, with legacy adoption', async (t) => {
-  // Two VS Code installs exist on this machine (a C: user install and an E: one).
-  // A single shared state file meant whichever patched last owned it, leaving the
-  // other patched with no way to restore it.
+  // Two installs must never share one state file: this box ran a C: user install and
+  // an E: one side by side (the E: one was retired 2026-10-09), and a single shared
+  // file meant whichever patched last owned it, leaving the other patched with no way
+  // to restore it.
   const a = stateFilePath('C:\\Users\\x\\AppData\\Local\\Programs\\Microsoft VS Code\\07f806f999\\resources\\app');
   const b = stateFilePath('E:\\Microsoft VS Code\\41dd792b5e\\resources\\app');
   assert.notEqual(a, b, '不同安装必须用不同的状态文件');
@@ -633,6 +661,22 @@ test('installer refuses to double-patch and repairs a stale backup', async (t) =
   assert.equal(html.split(MARKER_START).length - 1, 1, 'enable 两次也只应有一个补丁块');
   assert.equal(html, afterFirst, 'enable 两次不得改变文件内容');
 
+  // Startup: the assets are byte-identical after the first patch (the injected block is
+  // version-free and the origin is stable), so the second enable() must not rewrite them.
+  // Measured, the six writes cost 10-40 ms of every window's startup.
+  const dir = dirname(sandbox.htmlPath);
+  const stamps = () =>
+    readdirSync(dir)
+      .sort()
+      .map((n) => `${n}@${statSync(join(dir, n)).mtimeMs}`)
+      .join('|');
+  const before = stamps();
+  await installer.enable(settings('http://127.0.0.1:1'));
+  assert.equal(stamps(), before, '内容没变就不得重写注入文件（每个窗口启动都要跑一次）');
+  // …but a changed origin MUST be written: that is what the loader's version query reads.
+  await installer.enable(settings('http://127.0.0.1:2'));
+  assert.notEqual(stamps(), before, 'origin 变了必须重写（否则窗口会去连旧端口）');
+
   // A backup that itself contains the patch must not be trusted blindly.
   writeFileSync(`${sandbox.htmlPath}.we-orig`, html, 'utf8');
   await installer.disable();
@@ -650,4 +694,32 @@ test('buildBlock emits a playable, source-less video element', () => {
   const block = buildBlock('default-src \'none\';');
   assert.match(block, /<video[^>]+muted[^>]+loop[^>]+autoplay/);
   assert.match(block, /WE-CSP-ORIGINAL:/, 'CSP 原文随块一起保存，才能逐字节还原');
+});
+
+test('the startup path stays short: poster first, dense retry ramp, frozen loader', () => {
+  const core = buildJs('http://127.0.0.1:1');
+  const boot = buildBootJs();
+
+  // The whole-window layer shows the project's preview as the <video>'s NATIVE poster, so
+  // the window is not black while a big wallpaper decodes its first frame (measured ~0.7 s
+  // for a 214 MB video). The browser owns the poster's lifetime, so there is no state
+  // machine here to get wrong — which is how the panel's "poster stayed on top of the
+  // live video" bug is impossible in this layer.
+  assert.match(core, /video\.setAttribute\('poster', poster\)/, '视频必须先用预览当 poster');
+  assert.match(core, /reportVideo\(poster \? 'poster' : 'buffering'/, 'poster 阶段要进 /probe 时间线');
+  assert.match(core, /var videoFramed = false;/, '首帧只上报一次，靠这个闸门');
+  assert.match(core, /reportVideo\('playing', video\.currentSrc \|\| '', 'first-frame'\)/, '首帧要单独上报一次');
+
+  // Retry ramp: this page boots at ~0 and the port appears ~1.4 s later. A flat
+  // `500 ms * failures` schedule read it 100-300 ms late (measured).
+  assert.match(core, /var RETRY_STEPS = \[150, 150, 150/, '重试爬坡丢了');
+  assert.match(core, /failures < RETRY_STEPS\.length \? RETRY_STEPS\[failures\]/, 'schedule() 必须用爬坡');
+  assert.match(core, /: RETRY_TAIL_MS\);/, '爬坡之后要有长尾（新装的 VS Code 激活过慢时不能直接放弃）');
+  assert.doesNotMatch(core, /Math\.min\(BASE_DELAY \* failures, 5000\)/, '旧的线性退避必须删掉');
+
+  // The loader is frozen: workbench.html (checksummed, and rewriting it while VS Code
+  // runs is what raises the "安装似乎已损坏" toast) references it by NAME, so any content
+  // change needs a rename. Everything optimisable therefore lives in the CORE, which the
+  // loader imports with a version query.
+  assert.match(boot, /Math\.min\(400 \* tries, 5000\)/, 'loader 的重试逻辑不能改（改了要换文件名）');
 });

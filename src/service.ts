@@ -32,6 +32,8 @@ export interface WallpaperItem {
   title: string;
   type: string;
   contentrating: string | null;
+  /** WE project tags, for the picker's category chips. Never null; [] when absent. */
+  tags: string[];
   /** Loopback URL of the main media file, or null when unavailable. */
   media: string | null;
   /**
@@ -153,6 +155,7 @@ export class WallpaperService {
         title: p.title,
         type: p.type,
         contentrating: p.contentrating,
+        tags: p.tags,
         media,
         sceneBase,
         preview: p.previewAbs ? this.media.register(p.previewAbs) : null,
@@ -230,7 +233,13 @@ export class WallpaperService {
     surface: 'both' | 'workbench' | 'panel' = 'both',
   ): { url: string; kind: 'video' | 'image' | 'scene' | 'web'; still?: string | null } | null {
     if (!item) return null;
-    if (item.renderMode === 'video' && item.media) return { url: item.media, kind: 'video' };
+    if (item.renderMode === 'video' && item.media) {
+      // The preview rides along as the video element's native poster: a big wallpaper
+      // takes ~0.7 s to produce its first frame, and until then the layer is black —
+      // which is most of what "startup is slow" looks like. Chromium drops the poster
+      // on its own once a frame exists, so there is no state to get wrong.
+      return { url: item.media, kind: 'video', still: item.preview ?? null };
+    }
     // Opt-in: a live wallpaper in the whole-window layer. A Scene needs no
     // workbench.html rewrite (its CSP allows blob: scripts, and the engine is imported
     // from one), and a Web wallpaper needs none either (the author app is framed by

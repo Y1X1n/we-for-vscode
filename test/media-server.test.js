@@ -135,9 +135,14 @@ test('/current + /status + /beacon: the routes the patched workbench relies on',
   // style probe fires on a timer and must never overwrite the scene report (that
   // overwrite is exactly how the whole-window scene failure stayed invisible).
   const styleBack = await (await fetch(`${server.origin}/probe`)).json();
-  assert.deepEqual({ ...styleBack, scene: undefined, contrast: undefined }, { ...JSON.parse(report), scene: undefined, contrast: undefined });
+  assert.deepEqual(
+    { ...styleBack, scene: undefined, contrast: undefined, video: undefined, videoTimeline: undefined },
+    { ...JSON.parse(report), scene: undefined, contrast: undefined, video: undefined, videoTimeline: undefined },
+  );
   assert.equal(styleBack.scene, null);
   assert.equal(styleBack.contrast, null);
+  assert.equal(styleBack.video, null, 'wallpaper 时间线槽位初始为空');
+  assert.deepEqual(styleBack.videoTimeline, [], 'wallpaper 时间线历史初始为空');
 
   const sceneReport = JSON.stringify({ scene: { stage: 'mounted', key: 'k', err: null, tt: 'present' } });
   const scenePost = await fetch(`${server.origin}/probe`, {
@@ -163,6 +168,36 @@ test('/current + /status + /beacon: the routes the patched workbench relies on',
   assert.match(contrastBack.contrast.err, /代码文字对比度=5\.10:1/, '对比度报告独立保存');
   assert.deepEqual(contrastBack.scene, { stage: 'mounted', key: 'k', err: null, tt: 'present' }, '对比度上报不得覆盖 scene 报告');
   assert.ok(contrastBack.styles, '对比度上报不得覆盖 style 探针');
+
+  // Wallpaper timeline: a FOURTH slot, carrying performance.now() per stage. This is the
+  // only measurement of the user-visible startup taken inside the renderer.
+  const videoReport = JSON.stringify({ video: { stage: 'playing', key: 'http://127.0.0.1/m/x', ms: 1234, err: 'first-frame' } });
+  await fetch(`${server.origin}/probe`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+    body: videoReport,
+  });
+  const videoBack = await (await fetch(`${server.origin}/probe`)).json();
+  assert.deepEqual(videoBack.video, { stage: 'playing', key: 'http://127.0.0.1/m/x', ms: 1234, err: 'first-frame' }, 'wallpaper 时间线独立保存');
+  assert.ok(videoBack.styles, '时间线上报不得覆盖 style 探针');
+  assert.deepEqual(videoBack.scene, { stage: 'mounted', key: 'k', err: null, tt: 'present' }, '时间线上报不得覆盖 scene 报告');
+
+  // The HISTORY matters: the first frame overwrites the poster stage in a fraction of a
+  // second, so a reader polling slower than that sees only "playing" and cannot tell
+  // whether the poster ever appeared (which is the whole point of the poster).
+  const posterReport = JSON.stringify({ video: { stage: 'poster', key: 'http://127.0.0.1/m/x', ms: 410, err: 'poster=yes' } });
+  await fetch(`${server.origin}/probe`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+    body: posterReport,
+  });
+  const timelineBack = await (await fetch(`${server.origin}/probe`)).json();
+  assert.deepEqual(
+    timelineBack.videoTimeline.map((s) => `${s.stage}@${s.ms}`),
+    ['playing@1234', 'poster@410'],
+    '时间线要按上报顺序保留每一步（poster 不会被首帧挤掉）',
+  );
+  assert.equal(timelineBack.video.stage, 'poster', 'video 仍是最新一条');
 
   const preflight = await fetch(`${server.origin}/probe`, {
     method: 'OPTIONS',

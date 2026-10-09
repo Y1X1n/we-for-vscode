@@ -77,6 +77,20 @@ function readSteamRoots(): string[] {
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const log = new Logger(readLevel());
+  /**
+   * Startup timeline, logged as [perf] lines.
+   *
+   * "Why is the wallpaper slow to appear?" used to be unanswerable: the host phases and
+   * the renderer's own timeline were both invisible. The renderer half lives in /probe's
+   * `video` slot (see reportVideo in workbench/patch.ts, which stamps performance.now()
+   * per stage); these lines are the host half, measured from the first instruction of
+   * activate(). `process.uptime()` says how early in the extension host's life that was,
+   * which is what an activation-event change actually moves.
+   */
+  const perfT0 = Date.now();
+  const perf = (label: string): void =>
+    log.info(`[perf] ${label}：+${Date.now() - perfT0}ms（扩展宿主已运行 ${Math.round(process.uptime() * 1000)}ms）`);
+  perf('activate 开始');
   const mediaPort = vscode.workspace.getConfiguration('weWallpaper').get<number>('mediaPort', 39127);
   const media = new MediaServer(log.logFn, { secret: deriveMediaSecret(vscode.env.appRoot), preferredPort: mediaPort });
   // Scene/Web live rendering needs no setup: the engine is the MIT npm package
@@ -400,6 +414,49 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     if (pick === '关闭本窗口') void vscode.commands.executeCommand('workbench.action.closeWindow');
   };
 
+  /** Quit the whole application (all windows). Used by the restart prompts. */
+  const quitCode = async (): Promise<void> => {
+    try {
+      await vscode.commands.executeCommand('workbench.action.quit');
+    } catch {
+      void vscode.window.showInformationMessage(
+        '没能自动退出，请手动关闭所有 VS Code 窗口（确认任务管理器里已没有 Code.exe）后重新打开。',
+      );
+    }
+  };
+
+  /**
+   * Full-app restart, NOT a window reload.
+   *
+   * VS Code's integrity service reads product.json's checksum table once, when the
+   * application starts, and compares the installation files against that snapshot for
+   * the lifetime of that process. Writing workbench.html while the app runs therefore
+   * looks like tampering: the renderer logs
+   *
+   *   *** Installation has been modified on disk ***
+   *
+   * and the user is shown the "installation appears to be corrupt / reinstall"
+   * notification on EVERY later window load. A window reload cannot clear it — same
+   * process, same stale snapshot — which is exactly what made the 1.141 update read as
+   * "the extension broke VS Code": the update wiped the patch, the extension re-applied
+   * it in-session, the extension asked for a reload, the warning stayed, nothing looked
+   * patched until the app was fully restarted.
+   *
+   * Only a full quit + relaunch re-reads the table the extension just fixed up, and
+   * since the table now matches the patched file, the check passes and stays quiet.
+   */
+  const promptAppRestart = async (why: string): Promise<void> => {
+    const pick = await vscode.window.showInformationMessage(
+      `${why}\n\n` +
+        '补丁是写进**安装目录**的文件，而 VS Code 只在**启动时**读取安装校验表：这个会话里会一直提示' +
+        '「安装似乎已损坏／安装已被修改」，重载窗口（Ctrl+R）清不掉它。请**完全退出 VS Code 再重新打开**' +
+        '（所有窗口都关掉，托盘里也别留）。',
+      '退出 VS Code',
+      '稍后',
+    );
+    if (pick === '退出 VS Code') void quitCode();
+  };
+
   /**
    * Transparent title bar: `window.titleBarStyle`, `window.controlsStyle` and the
    * two `titleBar.*Background` theme colours.
@@ -526,7 +583,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     const st = installer.status();
     if (!st.supported || !st.patched) return false;
     const origin = await ensureMedia();
+    perf('媒体服务就绪');
     await ensureInventory();
+    perf(`壁纸库就绪（${service.current?.items.length ?? 0} 张）`);
     const item = service.find(selectedId) ?? service.playableItems()[0];
     if (!item?.media) {
       log.warn('当前壁纸没有可用的媒体 URL，工作台背景保持原样');
@@ -537,8 +596,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     media.setCurrent(service.workbenchTargetFor(item, liveSceneEnabled(), liveSurface()));
     pushWorkbenchView();
     const after = await installer.enable(workbenchPatchSettings(origin));
+    perf('注入资源写入/校验完成');
     await applyWallpaperEditorSettings(true);
     log.info(`工作台背景已刷新：${item.title}`);
+    perf(`工作台背景刷新完成（${item.title}）`);
     // The window this code runs in loaded the css/js BEFORE this rewrite, so it is
     // still showing the previous build. Reloading re-reads workbench.html (which
     // points at the frozen loader) and therefore picks up the new assets — without
@@ -554,6 +615,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   async function enableWorkbenchBackground(fromSetting: boolean): Promise<void> {
     const st = installer.status();
+    // Remembered because it decides which prompt is honest afterwards: an installation
+    // that was NOT patched when this window activated gets its workbench.html written
+    // right now, inside a running app (see promptAppRestart).
+    const wasPatched = st.patched;
     if (!st.supported) {
       void vscode.window.showErrorMessage(`这个 VS Code 安装不支持打补丁：${st.reason ?? '未知原因'}`);
       return;
@@ -572,6 +637,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     const after = await installer.enable(workbenchPatchSettings(origin));
     await applyWallpaperEditorSettings(true);
     log.info(`补丁状态：patched=${after.patched} checksumMismatch=${after.checksumMismatch ?? false}`);
+    if (!wasPatched && after.patched) {
+      // This session just wrote workbench.html (a VS Code update had wiped the patch, or
+      // the user enabled it for the first time). The running process still holds the
+      // pre-patch checksum snapshot, so it will keep reporting "installation has been
+      // modified on disk" — reloading the window cannot clear that, only a full restart.
+      markAppRestartNeeded();
+      await promptAppRestart(`已为「${item.title}」注入工作台背景（这次真正写入了 workbench.html）。`);
+      return;
+    }
     if (after.assetsUpdated) {
       markAssetsStale();
       // Whatever this window is showing now, it is the PREVIOUS build: it loaded the
@@ -615,7 +689,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }
     await installer.disable();
     await applyWallpaperEditorSettings(false);
-    await promptReload('已移除工作台背景并把安装目录还原为原样。');
+    // Restoring the file is the same class of change as writing it: the running process
+    // compares the installation against the snapshot it took at startup, so it now sees
+    // a second modification and repeats the warning until a full restart.
+    markAppRestartNeeded();
+    await promptAppRestart('已移除工作台背景并把安装目录还原为原样。');
   }
 
   /**
@@ -719,6 +797,21 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     log.info('状态栏提示：壁纸资源待重载（点击重载窗口）');
   };
 
+  /**
+   * The one case a reload cannot fix (see promptAppRestart): the installation file was
+   * written while the app is running, so the integrity snapshot this process holds is
+   * stale and the "installation has been modified" warning will repeat until a full
+   * restart. The status bar is the only place users reliably look.
+   */
+  const markAppRestartNeeded = (): void => {
+    status.command = 'weWallpaper.restartCode';
+    status.text = '$(warning) 需重启 VS Code';
+    status.tooltip =
+      '补丁刚写入安装目录。VS Code 只在启动时读安装校验表，所以重载窗口清不掉「安装似乎已损坏」的提示——需要完全退出再打开。点击退出 VS Code。';
+    status.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
+    log.info('状态栏提示：需完全重启 VS Code（重载窗口不够：安装校验表只在启动时读取）');
+  };
+
   // ── commands ──────────────────────────────────────────────────────────────
   context.subscriptions.push(
     vscode.commands.registerCommand('weWallpaper.open', () => openPanel()),
@@ -728,6 +821,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('weWallpaper.enableWorkbenchBackground', () => setSetting('workbenchBackground', true)),
     vscode.commands.registerCommand('weWallpaper.disableWorkbenchBackground', () => setSetting('workbenchBackground', false)),
     vscode.commands.registerCommand('weWallpaper.workbenchStatus', () => workbenchStatus()),
+    // Reachable from the status bar when the patch was written in this session: quitting
+    // is what clears VS Code's stale integrity snapshot (see promptAppRestart).
+    vscode.commands.registerCommand('weWallpaper.restartCode', () => quitCode()),
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (!e.affectsConfiguration('weWallpaper')) return;
       if (e.affectsConfiguration('weWallpaper.logLevel')) log.setLevel(readLevel());
@@ -819,6 +915,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   // ── startup: converge the switches with reality ────────────────────────────
   const boot = installer.status();
+  perf(`补丁状态读取完成（patched=${boot.patched}）`);
   const cfg = vscode.workspace.getConfiguration('weWallpaper');
 
   // Selection: the settings page is authoritative when it names a wallpaper.
@@ -847,6 +944,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       if (windowKeysChanged) void promptWindowRestart(true);
     });
   }
+  perf('标题栏设置收敛完成');
 
   // Workbench background: the switch decides. One-time adoption first, so an
   // installation patched before these switches existed is not torn down.

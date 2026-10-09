@@ -80,7 +80,7 @@ code --install-extension y1x1n.we-for-vscode
 # 先完全关闭 VS Code（整窗背景层是文件级补丁，运行中安装会留给 webview 一个
 # "Could not register service worker" 报错）
 & "$env:LOCALAPPDATA\Programs\Microsoft VS Code\bin\code.cmd" `
-  --install-extension .\we-for-vscode-0.1.12.vsix --force
+  --install-extension .\we-for-vscode-0.1.16.vsix --force   # 版本号以 Release 里的文件名为准
 ```
 
 装好后启动 VS Code：扩展会自动激活，壁纸视图用 `Ctrl+Alt+W` 打开。
@@ -92,7 +92,7 @@ git clone https://github.com/Y1X1n/we-for-vscode.git
 cd we-for-vscode
 npm install
 npm run verify                        # tsc + node --test
-npx vsce package --no-dependencies    # 产出 we-for-vscode-0.1.12.vsix
+npx vsce package --no-dependencies    # 产出 we-for-vscode-<版本>.vsix（版本取自 package.json）
 ```
 
 ### 打开“铺满整个窗口”
@@ -101,7 +101,7 @@ npx vsce package --no-dependencies    # 产出 we-for-vscode-0.1.12.vsix
 
 1. 打开壁纸视图（`Ctrl+Alt+W`），选一张壁纸；
 2. 命令面板运行 **Wallpaper Engine: 启用壁纸背景（铺满 VS Code，实验/需改安装目录）**，或在设置里打开 `weWallpaper.workbenchBackground`；
-3. 按提示**重载窗口**（其它已打开的窗口各按一次 `Ctrl+R`；新开的窗口自动生效）。
+3. 按提示处理：**第一次打补丁（或 VS Code 更新把补丁冲掉之后）要完全退出并重新打开 VS Code** —— 安装校验表只在启动时读一次，`Ctrl+R` 清不掉「安装似乎已损坏」的提示；若只是补丁资源有更新，按提示重载窗口即可（其它已打开的窗口各按一次 `Ctrl+R`，新开的窗口自动生效）。
 
 想还原：运行 **禁用壁纸背景（还原安装目录）**——安装目录会被还原成原样。
 
@@ -110,7 +110,7 @@ npx vsce package --no-dependencies    # 产出 we-for-vscode-0.1.12.vsix
 | 命令 | 说明 |
 |---|---|
 | `Wallpaper Engine: 打开壁纸视图`（`Ctrl+Alt+W`） | 打开面板 |
-| `Wallpaper Engine: 选择壁纸…` | 打开面板并展开壁纸库（选择全程在面板内完成） |
+| `Wallpaper Engine: 选择壁纸…` | 打开面板并展开壁纸库（选择全程在面板内完成；可按类型 / 标签 / 来源 / 分级筛选，或直接搜名称） |
 | `Wallpaper Engine: 下一张壁纸` | 顺延到下一张可播放壁纸 |
 | `Wallpaper Engine: 重新扫描壁纸库` | 强制重扫（含 Steam 目录缓存） |
 | `Wallpaper Engine: 启用/禁用壁纸背景` | 整窗背景层的开关（改/还原安装目录） |

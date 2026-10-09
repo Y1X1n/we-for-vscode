@@ -200,30 +200,116 @@ body {
   background: var(--vscode-button-hoverBackground, #1177bb);
 }
 
+/* ── settings ─────────────────────────────────────────────────────────────────
+   Grouped by what each control actually affects, with the read-outs carrying their
+   unit: the panel used to print raw floats for every slider ("16.00" for a blur radius
+   that is px, "1.00" for an opacity). Rows reset individually, and the reset only
+   materialises when there is something to reset — otherwise the column is 11 identical
+   ↺ glyphs competing with the values. */
+
 .we-controls {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-}
-
-/* 「立即生效」 and its one-line feedback. It lives with the sliders because that is what
-   it applies; the hint stays `hidden` until the host answers, and `[hidden]` is
-   restated below for the same reason as `.we-controls` (a flex display would win). */
-.we-apply {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.we-apply > .we-hint[hidden] {
-  display: none;
+  gap: 14px;
 }
 
 /* The library replaces the sliders while it is open. `hidden` MUST be restated here:
    the UA rule `[hidden] { display: none }` loses to the author `display: flex` above,
    so without this line the controls would stay on screen behind the list. */
 .we-controls[hidden] {
+  display: none;
+}
+
+.we-controls-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.we-controls-title {
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.55;
+}
+
+.we-linkbtn {
+  padding: 2px 4px;
+  font: inherit;
+  font-size: 0.72rem;
+  color: var(--vscode-textLink-foreground, #3794ff);
+  background: none;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.we-linkbtn:hover {
+  text-decoration: underline;
+}
+
+.we-linkbtn:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder, #007fd4);
+  outline-offset: 1px;
+}
+
+.we-group {
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.we-group-title {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0 0 9px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  opacity: 0.85;
+}
+
+.we-group-hint {
+  font-size: 0.66rem;
+  font-weight: 400;
+  opacity: 0.6;
+}
+
+.we-group-body {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 13px;
+}
+
+/* A wide panel has room for two columns: the settings page is 11 controls tall and the
+   single column left half the panel empty next to each slider. */
+@media (min-width: 560px) {
+  .we-group-body {
+    grid-template-columns: 1fr 1fr;
+    column-gap: 20px;
+  }
+}
+
+/* 「立即生效」 and its one-line feedback. It sticks to the bottom of the scrolling panel:
+   the page is taller than the panel on a laptop, and the button used to scroll out of
+   reach. The bar carries its own glass so rows do not show through the text; `[hidden]`
+   is restated for the same reason as .we-controls (a flex display would win). */
+.we-apply {
+  position: sticky;
+  bottom: -14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 2px -18px -14px;
+  padding: 10px 18px 12px;
+  background: rgb(var(--we-glass-rgb) / 0.72);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.we-apply > .we-hint[hidden] {
   display: none;
 }
 
@@ -277,6 +363,94 @@ body {
   list-style: none;
   max-height: min(52vh, 460px);
   overflow-y: auto;
+}
+
+/* ── category chips ──────────────────────────────────────────────────────────
+   Three rows, each scrollable on its own (a library with 30 tags must not push the
+   list off the panel): 类型 / 标签 / 来源+分级. The active chip is the accent colour,
+   because "which filter is on?" is the question a filtered list raises first. */
+
+.we-filters {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.we-filters:empty {
+  display: none;
+}
+
+.we-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 1px;
+  scrollbar-width: none;
+}
+
+.we-filter-row::-webkit-scrollbar {
+  display: none;
+}
+
+.we-filter-label {
+  flex: none;
+  font-size: 0.66rem;
+  opacity: 0.55;
+}
+
+.we-filter-sep {
+  flex: none;
+  width: 1px;
+  height: 14px;
+  margin: 0 2px;
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.we-chip {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  font: inherit;
+  font-size: 0.72rem;
+  color: inherit;
+  white-space: nowrap;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.we-chip:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.we-chip--on {
+  color: var(--vscode-button-foreground, #fff);
+  background: var(--vscode-button-background, #0e639c);
+  border-color: transparent;
+}
+
+.we-chip--on:hover {
+  background: var(--vscode-button-hoverBackground, #1177bb);
+}
+
+.we-chip:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder, #007fd4);
+  outline-offset: 1px;
+}
+
+.we-chip-count {
+  font-size: 0.66rem;
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
+
+.we-chip--on .we-chip-count {
+  opacity: 0.85;
 }
 
 .we-lib-item {
@@ -358,41 +532,181 @@ body {
 }
 
 .we-field {
-  display: block;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
   font-size: 0.76rem;
 }
 
-.we-field > span {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 3px;
-  opacity: 0.9;
-}
-
-.we-field output {
-  font-variant-numeric: tabular-nums;
-  opacity: 0.7;
-}
-
-.we-field input[type='range'] {
-  width: 100%;
-  accent-color: var(--vscode-button-background, #0e639c);
-}
-
-.we-field--color {
+.we-field-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.we-field-head > label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.9;
+}
+
+.we-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.72;
+}
+
+.we-value output {
+  min-width: 3.6em;
+  text-align: right;
+}
+
+.we-reset {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  font: inherit;
+  font-size: 0.72rem;
+  line-height: 1;
+  color: inherit;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 50%;
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity 0.12s ease, background 0.12s ease;
+}
+
+.we-field:hover .we-reset,
+.we-reset:focus-visible {
+  opacity: 0.85;
+}
+
+.we-reset:hover {
+  background: rgba(255, 255, 255, 0.24);
+}
+
+/* Nothing to reset → nothing to show. Also keeps the row from shifting when the
+   button appears/disappears (it sits in the value column either way). */
+.we-reset[disabled] {
+  display: none;
+}
+
+.we-reset:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder, #007fd4);
+  outline-offset: 1px;
+}
+
+/* Range: the themed accent colour was the entire look before, which left every track
+   flat and every value unit-less. The fill is a gradient stop driven by --fill (set
+   from JS), so the track reads as a value before the number is read at all. */
+.we-field input[type='range'] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 16px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.we-field input[type='range']::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 999px;
+  background: linear-gradient(
+    to right,
+    var(--vscode-button-background, #0e639c) 0 var(--fill, 0%),
+    rgba(255, 255, 255, 0.18) var(--fill, 0%) 100%
+  );
+}
+
+.we-field input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 13px;
+  height: 13px;
+  margin-top: -4.5px;
+  border: 2px solid rgba(255, 255, 255, 0.9);
+  border-radius: 50%;
+  background: var(--vscode-button-background, #0e639c);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+  transition: transform 0.12s ease;
+}
+
+.we-field input[type='range']:hover::-webkit-slider-thumb {
+  transform: scale(1.12);
+}
+
+.we-field input[type='range']:active::-webkit-slider-thumb {
+  transform: scale(1.22);
+}
+
+.we-field input[type='range']:focus-visible {
+  outline: 2px solid var(--vscode-focusBorder, #007fd4);
+  outline-offset: 2px;
+  border-radius: 999px;
+}
+
+/* Colour row: label + hex + swatch on ONE line — the bare swatch said nothing about
+   which colour was actually set. */
+.we-field--color {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.we-field--color .we-field-head {
+  flex: 1;
+}
+
+.we-field--color .we-value output {
+  min-width: 5.4em;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 0.72rem;
 }
 
 .we-field--color input[type='color'] {
-  width: 48px;
-  height: 22px;
+  flex: none;
+  width: 34px;
+  height: 24px;
   padding: 0;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: 7px;
   background: none;
+  cursor: pointer;
+}
+
+.we-field--color input[type='color']::-webkit-color-swatch-wrapper {
+  padding: 2px;
+}
+
+.we-field--color input[type='color']::-webkit-color-swatch {
+  border: 0;
+  border-radius: 5px;
+}
+
+.we-field--color input[type='color']:focus-visible {
+  outline: 2px solid var(--vscode-focusBorder, #007fd4);
+  outline-offset: 2px;
+}
+
+.we-btn:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder, #007fd4);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .we-reset,
+  .we-field input[type='range']::-webkit-slider-thumb {
+    transition: none;
+  }
 }
 
 .we-foot {

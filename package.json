@@ -2,7 +2,7 @@
   "name": "we-for-vscode",
   "displayName": "Wallpaper Engine for VS Code",
   "description": "Your real Wallpaper Engine library inside VS Code: video, Scene and Web wallpapers rendered live behind the whole window, with frosted glass and code text that stays readable (WCAG 4.5:1). Unofficial.",
-  "version": "0.1.12",
+  "version": "0.1.16",
   "publisher": "y1x1n",
   "license": "MIT",
   "repository": {
@@ -29,7 +29,7 @@
   ],
   "main": "./out/extension.js",
   "activationEvents": [
-    "onStartupFinished"
+    "*"
   ],
   "capabilities": {
     "untrustedWorkspaces": {
@@ -76,6 +76,11 @@
       {
         "command": "weWallpaper.workbenchStatus",
         "title": "诊断：壁纸背景状态（补丁 / 校验和 / 已生效窗口数）",
+        "category": "Wallpaper Engine"
+      },
+      {
+        "command": "weWallpaper.restartCode",
+        "title": "完全退出 VS Code（清除“安装似乎已损坏”提示）",
         "category": "Wallpaper Engine"
       }
     ],

@@ -302,6 +302,11 @@ export function buildCss(): string {
     'chat-slashCommandBackground',
     'chat-checkpointSeparator',
     'editorGroupHeader-border',
+    // 1.141 modern UI: the floating panel cards (.part.sidebar / .part.auxiliarybar in
+    // floating-panels mode) paint this key with !important (#191A1B in 2026-dark), so
+    // the only way to keep them glassy is to neutralise the key itself — the frosted
+    // ::before below is what gives them their surface.
+    'surface-background',
   ];
   const varRules = transparentVars.map((v) => `\t--vscode-${v}: transparent !important;`).join('\n');
   /**
@@ -528,6 +533,40 @@ ${scope} .monaco-workbench .scrollbar .slider {
 \tbackground: transparent !important;
 }
 
+/* VS Code 1.141 "modern UI / floating panels" — the sheet that hid the wallpaper.
+ *
+ * titlebarPart.updateStyles() writes an OPAQUE shell colour into a CSS variable at
+ * runtime (getContainer(...).style.setProperty('--modern-ui-shell-background', c))
+ * and workbench.desktop.main.css then paints it on BOTH the workbench root and its
+ * layout container:
+ *
+ *   .monaco-workbench.floating-panels,
+ *   .monaco-workbench.floating-panels > .monaco-grid-view { background-color: var(--modern-ui-shell-background, …) }
+ *
+ * The root is covered by the transparent list above, but .monaco-grid-view is not —
+ * and that is the element filling the window, so with floating panels on (1.141's
+ * default; the class list carries floating-panels) the wallpaper layer at z-index:-1
+ * ended up behind a fully opaque sheet. The symptom is nasty precisely because the
+ * computed styles all look right: every probed band reads rgba(0,0,0,0), the engine
+ * still renders (contrast reports bright pixels), and the screen shows a flat dark
+ * window over the glass.
+ *
+ * The variable is set INLINE, and an inline declaration beats a stylesheet one — so the
+ * override must carry !important AND sit on the element the workbench writes it to (the
+ * layout container), plus the root for the selector's other consumer. The direct
+ * background rule is the belt to that braces: it holds even if a later build moves the
+ * variable onto a wrapper this file has never seen. */
+${scope},
+${scope} .monaco-workbench,
+${scope} .monaco-workbench > .monaco-grid-view {
+\t--modern-ui-shell-background: transparent !important;
+}
+
+${scope} .monaco-workbench > .monaco-grid-view,
+${scope} .monaco-workbench.floating-panels > .monaco-grid-view {
+\tbackground-color: transparent !important;
+}
+
 /* The tab strip and title bar need explicit structural rules, not just variable
    overrides: with window.titleBarStyle set to "custom" the frame is DOM-painted
    (.part.titlebar / .menubar), and the editor group title paints its own strip.
@@ -548,6 +587,18 @@ ${scope} .monaco-workbench .part.editor > .content .editor-group-container > .ti
 ${scope} .monaco-workbench .part.editor > .content .editor-group-container > .title .tab,
 ${scope} .monaco-workbench .part.editor .tabs,
 ${scope} .monaco-workbench .part.editor .tab {
+\tbackground: transparent !important;
+}
+
+/* 1.141 moved the editor tab strip: the group header itself now carries "tabs"
+ * (.title.tabs) and the strip lives in .tabs-and-actions-container > .tabs-container
+ * instead of a ".title .tabs" child, so the old ".tabs" descendant selector silently
+ * stopped matching (the runtime probe reported it MISSING). The ".title" rule above
+ * still covers the band, but the new inner containers are listed explicitly so a future
+ * build that paints one of them cannot reintroduce an opaque strip. */
+${scope} .monaco-workbench .part.editor > .content .editor-group-container > .title.tabs,
+${scope} .monaco-workbench .part.editor .tabs-and-actions-container,
+${scope} .monaco-workbench .part.editor .tabs-container {
 \tbackground: transparent !important;
 }
 
@@ -839,7 +890,20 @@ export function buildJs(origin: string): string {
   'use strict';
   var ORIGIN = ${JSON.stringify(origin)};
   var MAX_TRIES = 20;
-  var BASE_DELAY = 500;
+  /**
+   * Retry ramp for /current, in ms (each attempt is scheduled after the previous fails).
+   *
+   * This page boots at ~0 and the extension host — the only thing that can bind the port
+   * — becomes ready ~1.4 s later, so the ramp probes every 150 ms across the first two
+   * seconds and backs off after that. A flat 500 ms * failures schedule read the port
+   * 100-300 ms late (measured against the renderer's own timeline); a refused loopback
+   * connection costs about a millisecond, so probing more often is free, while probing
+   * too late is exactly the startup latency being optimised. The long tail matters too:
+   * a fresh install can take 7 s to activate (measured), and giving up early would leave
+   * the window with no wallpaper at all until the next reload.
+   */
+  var RETRY_STEPS = [150, 150, 150, 150, 150, 150, 150, 150, 150, 150, 150, 150, 150, 150, 300, 500, 700];
+  var RETRY_TAIL_MS = 2000;
   var POLL_MS = 15000;
   var FALLBACK_CLASS = 'we-wb-fallback';
   // Video wallpapers often fade in from black, so the first frame is a bad sample.
@@ -870,6 +934,25 @@ export function buildJs(origin: string): string {
   var userScrim = null;
   /** The user's own code-surface opacity; the measurement may raise it. */
   var userEditorAlpha = null;
+
+  /**
+   * The wallpaper timeline, in its own /probe slot (the "video" key).
+   *
+   * Every stage carries performance.now(): milliseconds since THIS document started
+   * loading, i.e. "how long after the window opened did the wallpaper appear". The
+   * host's own phases are logged as [perf] lines, and together they answer "why is
+   * startup slow?" — which is otherwise unattributable from outside the renderer.
+   */
+  function reportVideo(stage, key, extra) {
+    try {
+      var ms = (window.performance && performance.now) ? Math.round(performance.now()) : -1;
+      var body = JSON.stringify({ video: { stage: stage, key: key || '', ms: ms, err: extra ? String(extra) : null } });
+      fetch(ORIGIN + '/probe', { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: body })['catch'](function () {});
+    } catch (e) { /* diagnostics must never break playback */ }
+  }
+  /** Set once the first video frame is on screen: the number that matters for startup. */
+  var videoFramed = false;
+  reportVideo('boot', '');
 
   /* WB-CONTRAST:START — the same math as media/contrast.mjs, which the panel
      imports. It cannot be imported here: this document's CSP allows scripts from
@@ -1653,9 +1736,21 @@ export function buildJs(origin: string): string {
         } else {
           setMode('video');
           applyView(lastPayload, video);
+          // The project's preview as the <video>'s native poster: something is on screen
+          // while a big wallpaper decodes its first frame, and Chromium takes the poster
+          // down by itself the moment a frame exists. No extra element, no stacking to
+          // get wrong, and no way to reproduce the panel's "poster stayed on top of the
+          // live video" bug — the browser owns the lifetime here.
+          var poster = (payload && typeof payload.still === 'string' && payload.still) ? payload.still : null;
+          if (video.getAttribute('poster') !== poster) {
+            if (poster) video.setAttribute('poster', poster);
+            else video.removeAttribute('poster');
+          }
           if (video.getAttribute('src') !== url) {
             video.setAttribute('src', url);
             underlaySampled = false;
+            // "The window stopped being black" — the stage before the first frame.
+            reportVideo(poster ? 'poster' : 'buffering', url, poster ? 'poster=yes' : 'poster=no');
           }
           active = video;
           var p = video.play();
@@ -1681,8 +1776,9 @@ export function buildJs(origin: string): string {
 
   function schedule(video, delay) {
     if (failures >= MAX_TRIES) { setFallback(true); return; }
+    var wait = delay || (failures < RETRY_STEPS.length ? RETRY_STEPS[failures] : RETRY_TAIL_MS);
     failures += 1;
-    window.setTimeout(function () { refresh(video); }, delay || Math.min(BASE_DELAY * failures, 5000));
+    window.setTimeout(function () { refresh(video); }, wait);
   }
 
   function attach(video) {
@@ -1694,9 +1790,20 @@ export function buildJs(origin: string): string {
     // sampling canvas readable (a tainted canvas would throw on getImageData).
     try { video.crossOrigin = 'anonymous'; } catch (e) { /* ignore */ }
 
-    video.addEventListener('error', function () { schedule(video, 0); });
+    video.addEventListener('error', function () {
+      reportVideo('error', '', video.error ? 'code=' + video.error.code : 'unknown');
+      schedule(video, 0);
+    });
+    video.addEventListener('loadedmetadata', function () {
+      reportVideo('metadata', video.currentSrc || '');
+    });
 
     video.addEventListener('playing', function () {
+      if (!videoFramed) {
+        // First frame after the window opened: the end of the startup path.
+        videoFramed = true;
+        reportVideo('playing', video.currentSrc || '', 'first-frame');
+      }
       failures = 0;
       setFallback(false);
       beacon();
@@ -1773,7 +1880,19 @@ export function buildJs(origin: string): string {
   // the reply from /probe instead of guessing from screenshots.
   function reportStyles() {
     var sels = [
+      // The wallpaper layer itself first: "is it even on screen?" is the question a
+      // screenshot could not answer on 1.141 (the GPU layer is not captured by GDI),
+      // and it is the one that fails silently — the layer can render, report a mounted
+      // canvas and still be covered or hidden. vis/disp/op/z below say which.
+      '#we-workbench-wallpaper',
+      '#we-workbench-wallpaper > video',
+      '#we-workbench-wallpaper > img',
+      '#we-workbench-scene',
+      '#we-workbench-scene > canvas',
+      '#we-workbench-web',
       '.monaco-workbench',
+      // 1.141's floating-panel shell: the element that painted the opaque sheet.
+      '.monaco-workbench > .monaco-grid-view',
       '.monaco-workbench .part.titlebar',
       '.monaco-workbench .part.titlebar > .titlebar-container',
       '.monaco-workbench .titlebar-left',
@@ -1805,6 +1924,10 @@ export function buildJs(origin: string): string {
       // The cursor's line. A solid fill here is the "black band on the current
       // line" complaint: Monaco paints it from editor.lineHighlightBackground.
       '.monaco-workbench .monaco-editor .current-line',
+      // 1.141 renamed the tab strip containers (see the stylesheet): report them so a
+      // future rename shows up as MISSING instead of as "the tabs look opaque now".
+      '.monaco-workbench .part.editor .tabs-and-actions-container',
+      '.monaco-workbench .part.editor .tabs-container',
       '.monaco-workbench .sticky-widget'
     ];
     var out = {};
@@ -1833,7 +1956,14 @@ export function buildJs(origin: string): string {
             return ps.backdropFilter || ps.webkitBackdropFilter || '';
           } catch (e) { return ''; }
         })(),
-        box: Math.round(el.getBoundingClientRect().width) + 'x' + Math.round(el.getBoundingClientRect().height)
+        box: Math.round(el.getBoundingClientRect().width) + 'x' + Math.round(el.getBoundingClientRect().height),
+        // Layer state. vis:"hidden" / disp:"none" on the wallpaper layer means the
+        // glass is over nothing — the failure mode that looks like "the patch did not
+        // apply" while every other measurement is green.
+        disp: cs.display,
+        vis: cs.visibility,
+        op: cs.opacity,
+        z: cs.zIndex
       };
     }
     // The direct answer to "is Electron still drawing a native overlay?" — the
@@ -1852,7 +1982,12 @@ export function buildJs(origin: string): string {
                    '--vscode-editor-hoverHighlightBackground', '--vscode-editorStickyScroll-background',
                    '--vscode-editorStickyScrollGutter-background',
                    '--we-wb-line-tint', '--we-wb-editor-wash', '--we-wb-sticky',
-                   '--we-wb-underlay', '--we-wb-opacity', '--we-wb-scrim'];
+                   '--we-wb-underlay', '--we-wb-opacity', '--we-wb-scrim',
+                   // 1.141's shell variable (set inline by the workbench with an opaque
+                   // colour — the value the grid view used to paint) and the new theme
+                   // surface key the floating cards fill from.
+                   '--modern-ui-shell-background', '--vscode-modernUI-shellBackground',
+                   '--vscode-surface-background'];
       for (var k = 0; k < names.length; k++) vars[names[k]] = wcs.getPropertyValue(names[k]).trim();
     } catch (e) { /* diagnostics only */ }
     var payload = JSON.stringify({

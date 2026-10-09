@@ -44,12 +44,12 @@
 ```powershell
 npm install          # devDependencies：typescript + @types/*
 npm run compile      # tsc -> out/
-npm test             # 48 条测试
-npx @vscode/vsce package --allow-missing-repository --skip-license
-code --install-extension .\we-for-vscode-0.1.12.vsix --force
+npm test             # 135 条测试
+npx vsce package --no-dependencies   # 产出 we-for-vscode-<版本>.vsix（版本取自 package.json）
+code --install-extension .\we-for-vscode-0.1.16.vsix --force   # 版本号以 Release 里的文件名为准
 ```
 
-装好后会出现在**扩展视图**里（`local-poc.we-for-vscode`），并且**每个窗口都会激活**——这是方案 B 对所有窗口生效、命令/状态栏处处可用的前提。卸载：`code --uninstall-extension local-poc.we-for-vscode`。
+装好后会出现在**扩展视图**里（`y1x1n.we-for-vscode`），并且**每个窗口都会激活**——这是方案 B 对所有窗口生效、命令/状态栏处处可用的前提。卸载：`code --uninstall-extension y1x1n.we-for-vscode`。
 
 > **为什么 F5 开发宿主不够**：`--extensionDevelopmentPath` 加载的是"开发扩展"，它**不是已安装扩展**，所以 ① 不出现在扩展视图里，② **只存在于被启动的那一个窗口**。其它窗口没有它——我实测过其它窗口的 `exthost.log`，完全没有本扩展的激活记录。要在多窗口使用，只能走 VSIX 安装。
 
@@ -192,7 +192,8 @@ Web 可渲染项: 3 张（CORSAIR Collection / Corsair-O-Tron / Customizable Mod
 
 | 设置 | 作用 |
 |---|---|
-| `weWallpaper.workbenchBackground` | **把壁纸铺满整个 VS Code**（改安装目录，已备份可还原）。改完提示重载 |
+| `weWallpaper.workbenchBackground` | **把壁纸铺满整个 VS Code**（改安装目录，已备份可还原）。**第一次打补丁（或 VS Code 更新冲掉补丁后）要完全退出并重新打开 VS Code**——安装校验表只在启动时读一次，`Ctrl+R` 清不掉「安装似乎已损坏」的提示；只是补丁资源更新时重载窗口即可 |
+| 壁纸视图里的「设置」页 | 上面这些旋钮的子集，按作用分组（壁纸 / 玻璃 / VS Code 界面 / 面板），读数带单位（`16 px` / `45%` / `1.30×`），每行一个 ↺ 加「全部恢复默认」；改完即时写回同一批 `weWallpaper.*` 键，和 VS Code 设置页是同一份值 |
 | `weWallpaper.transparentTitleBar` | **顶部标题栏 + 右上角最小化/最大化/关闭按钮一起透明**（写 `window.titleBarStyle: custom`、`window.controlsStyle: custom` 与 `workbench.colorCustomizations` 的 `titleBar.*Background`，关闭时精确还原你的原值）。**改完要完全关闭并重新打开 VS Code**：`controlsStyle` 只在建窗时读取，Ctrl+R 不够 |
 | `weWallpaper.workbenchOpacity` / `workbenchScrim` | 壁纸不透明度 / 暗化层强度 |
 | `weWallpaper.wallpaperId` | 当前壁纸 id（可直接填；用「选择壁纸…」挑会自动写回） |
@@ -248,15 +249,22 @@ Web 可渲染项: 3 张（CORSAIR Collection / Corsair-O-Tron / Customizable Mod
   - 若校验表被换掉（更新过）而补丁文件仍在，**改为就地剥离，绝不还原旧版本备份**——否则会拿旧版 `workbench.html` 覆盖新版文件，把好好的安装弄坏。状态文件里记录了 `patchedChecksum` 就是用来识别这件事的；卸载钩子走同一套判断。
   - 新版若改了 `workbench.html` 结构（CSP meta 或 `</body>`），`injectPatch` 会**明确报错拒绝**，而不是打半个补丁。
 - **每个窗口都需要扩展在跑**：媒体 URL 由扩展的回环服务提供。没有扩展的窗口会走 `.we-wb-fallback` 回退成正常界面。
-- **墙纸从 D 盘、VS Code 在 E 盘**：`vscode-file://vscode-app` 只能访问安装目录，所以不能用"同源文件"方案，必须走回环 HTTP + CSP 放行。
+- **墙纸在 D 盘、VS Code 在 C 盘**（用户安装：`%LOCALAPPDATA%\Programs\Microsoft VS Code\<commit>\resources\app`）：`vscode-file://vscode-app` 只能访问安装目录，所以不能用"同源文件"方案，必须走回环 HTTP + CSP 放行。
 - **4K 视频铺满整个窗口的 GPU/电量开销**远超面板模式；窗口不可见时会暂停解码。
 - **未验证**：macOS / Linux / Remote / 便携版（只读安装目录）未测试；macOS 的 `workbench.html` 路径与校验项不同。
 - **卸载安全**：植入 `vscode:uninstall` 钩子（`out/uninstall.js`），卸载扩展时会自动还原。
 
+> **2026-10-09 起本机只有一套安装**：旧的 `E:\Microsoft VS Code`（1.115.0）已更名为 `E:\Microsoft VS Code.disabled-1.115`；桌面/开始菜单快捷方式、`vscode://` 协议、`App Paths`、文件关联与用户 PATH 全部指向 C: 的用户安装（1.140.0）。补丁仍然**按安装各记一份状态**（`~/.we-for-vscode/workbench-patch-<hash>.json`），所以"换一套安装"等于"补丁需要在那一套里重新启用一次"。
+
 **手工还原（不依赖扩展，两条命令即可）**：
 
 ```powershell
-$d = 'E:\Microsoft VS Code\41dd792b5e\resources\app'   # = vscode.env.appRoot
+# appRoot：用户安装是版本号子目录，所以先找到含 product.json 的那一层
+$root = Join-Path $env:LOCALAPPDATA 'Programs\Microsoft VS Code'
+$d = Get-ChildItem $root -Directory |
+     ForEach-Object { Join-Path $_.FullName 'resources\app' } |
+     Where-Object { Test-Path (Join-Path $_ 'product.json') } |
+     Select-Object -First 1
 $w = "$d\out\vs\code\electron-browser\workbench"
 Copy-Item "$w\workbench.html.we-orig" "$w\workbench.html" -Force
 Copy-Item "$d\product.json.we-orig"   "$d\product.json"   -Force
@@ -331,6 +339,40 @@ _ref/                  VSCode 侧参考实现克隆（vscode-background / custom
 - **CSP 只放开回环源**：`media-src`/`img-src`/`connect-src` 精确到 `http://127.0.0.1:<端口>`，`default-src 'none'`。`127.0.0.1` 属规范定义的 potentially trustworthy origin，因此**不被混合内容拦截**。面板侧为引擎/壁纸额外放开的几处同样只指回环源：`script-src 'unsafe-inline' 'unsafe-eval' + 回环源`（**`unsafe-eval` 是场景脚本的硬需求**——WE 的文本挂件、对象属性表达式都是引擎编译执行的 JS 字符串，缺了它所有带脚本的场景在面板里残缺/不可见，而整窗层因 workbench CSP 本就有 unsafe-eval 而正常——这是"Scene 在面板不显示"的最后一块根因）、`style-src/font-src 回环源`、`frame-src blob:`（引擎改写后的作者文档经 blob URL 进 iframe，而 blob 文档继承面板的策略——见"挂载方式"一节）。
 - **可读性下限压过滑块**：上游测过 0.45/0.59 是文字对比度的硬底线，用户把玻璃调到全透明会让标题读不出来——这里沿用上游决定。
 - **Application 壁纸永不执行**：上游的明确排除项，照搬。
+
+## 启动速度：窗口 → 壁纸首帧 3.81 s → 2.3 s（0.1.16 实测）
+
+"启动慢"其实是四段时间之和，而这四段分别属于不同的进程，所以先把它们各自打点：
+
+| 阶段 | 改前 | 改后 | 做法 |
+|---|---|---|---|
+| 页面开始加载 → 扩展激活 | ~2.95 s | ~1.45 s | `activationEvents` 从 `onStartupFinished` 改成 `*`（前者要等 workbench 起完） |
+| 激活 → 端口可连（宿主自己的工作） | ~110 ms | ~78 ms | 壁纸库扫描 ~65 ms + 媒体服务 ~9 ms + 注入资源比对 ~10 ms |
+| 端口可连 → 渲染进程读到 `/current` | 100–300 ms | ≤150 ms | `/current` 重试爬坡：头 2 秒每 150 ms 一次，之后退避 2 s |
+| 有 URL → 首帧 | ~0.15–0.7 s | 0（预览先上） | 项目预览当 `<video>` 的**原生 poster**，首帧一到浏览器自己撤掉 |
+
+剩下那 ~1.45 s 是扩展宿主自身的启动（VS Code 加载自己的 JS），~0.15 s 是视频解码首帧 —— 这两段
+不归扩展管，所以继续优化这里已经没有意义。
+
+**怎么自己量**（不需要截图、不需要看屏幕）：
+
+- 宿主侧：扩展日志里的 `[perf]` 行，形如
+  `[perf] 壁纸库就绪（36 张）：+65ms（扩展宿主已运行 1542ms）` —— 前半是相对本次 `activate()` 的
+  耗时，后半是相对扩展宿主进程启动的时间（这一项才是激活时机改变能推动的量）。
+- 渲染侧：`GET http://127.0.0.1:39127/probe` 的 `video` 槽（最新一阶段）与 `videoTimeline`
+  （本次会话的全部阶段，最多 16 条），每个阶段带 `ms` = `performance.now()`，即"页面开始加载到
+  这一阶段的毫秒数"。**必须看历史**：首帧会在一瞬间覆盖 poster，只读最后一条就无法回答"poster
+  到底出现过没有"。
+
+两个反直觉的坑，都是实测出来的：
+
+1. **`poster` 不能用自建的元素去做**。面板里那张海报有自己的状态机（首帧后手动隐藏），一旦时序
+   不对就变成"海报盖住实时视频"；`<video poster>` 的生命周期归浏览器，首帧一到必然消失，没有
+   状态可写错。
+2. **冻结的 loader 不能改**。`workbench.html`（受校验保护、运行中重写会弹"安装似乎已损坏"）按
+   **文件名**引用 loader，所以 loader 内容一变就得换文件名。凡是可优化的逻辑（重试爬坡、poster）
+   都放在 loader 用版本查询串引入的 **core** 里 —— 改 core 不动 `workbench.html`
+   （`test/workbench-patch.test.mjs` 用摘要钉住了 loader 的内容，改了会红）。
 
 ## 归属与许可
 

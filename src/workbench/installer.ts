@@ -218,14 +218,23 @@ export class WorkbenchInstaller {
     for (const name of OBSOLETE_FILES) {
       await rm(join(dir, name), { force: true });
     }
-    await writeFile(join(dir, CSS_FILE), css, 'utf8');
-    await writeFile(join(dir, BOOT_FILE), boot, 'utf8');
-    await writeFile(join(dir, CORE_FILE), core, 'utf8');
-    // The Web-wallpaper stub the injected script frames (see buildWebStubHtml). New
-    // files next to workbench.html, so they are not covered by the checksum table.
-    await writeFile(join(dir, WEB_STUB_FILE), buildWebStubHtml(), 'utf8');
-    await writeFile(join(dir, WEB_STUB_JS_FILE), buildWebStubJs(), 'utf8');
-    await writeFile(join(dir, ASSETS_FILE), JSON.stringify({ version: assetVersion }), 'utf8');
+    // Every asset is written only when its bytes would change. After the first patch
+    // their content is identical on every launch (the injected block is version-free and
+    // the origin is stable per installation), so this turns ~85 KB of writes — measured
+    // at 10–40 ms of every window's startup — into six reads.
+    const files: Array<[string, string]> = [
+      [CSS_FILE, css],
+      [BOOT_FILE, boot],
+      [CORE_FILE, core],
+      // The Web-wallpaper stub the injected script frames (see buildWebStubHtml). New
+      // files next to workbench.html, so they are not covered by the checksum table.
+      [WEB_STUB_FILE, buildWebStubHtml()],
+      [WEB_STUB_JS_FILE, buildWebStubJs()],
+      [ASSETS_FILE, JSON.stringify({ version: assetVersion })],
+    ];
+    for (const [name, content] of files) {
+      await writeIfChanged(join(dir, name), content);
+    }
 
     await this.writeState(targets, settings);
     const after = this.status();
@@ -329,25 +338,42 @@ export class WorkbenchInstaller {
   }
 
   private async writeState(targets: WorkbenchTargets, settings: WorkbenchPatchSettings): Promise<void> {
-    const payload = JSON.stringify(
-      {
-        appRoot: targets.appRoot,
-        htmlPath: targets.htmlPath,
-        productPath: targets.productPath,
-        checksumKey: targets.checksumKey,
-        files: [...PATCH_FILES],
-        origin: settings.origin,
-        // Recorded so a later disable() can tell "our patch is still in place" from
-        // "VS Code updated underneath us" — in the latter case the pristine backup
-        // belongs to the old version and must never be written back.
-        patchedChecksum: checksum(await readFile(targets.htmlPath)),
-        updatedAt: new Date().toISOString(),
-      },
-      null,
-      2,
-    );
+    const payload = {
+      appRoot: targets.appRoot,
+      htmlPath: targets.htmlPath,
+      productPath: targets.productPath,
+      checksumKey: targets.checksumKey,
+      files: [...PATCH_FILES],
+      origin: settings.origin,
+      // Recorded so a later disable() can tell "our patch is still in place" from
+      // "VS Code updated underneath us" — in the latter case the pristine backup
+      // belongs to the old version and must never be written back.
+      patchedChecksum: checksum(await readFile(targets.htmlPath)),
+    };
+    // The timestamp is the one field that always differs, and it is only useful as "when
+    // did this state last CHANGE" — so compare everything else first. Without this the
+    // file is rewritten on every window start.
+    const existing = (await readJson(this.statePath)) as Record<string, unknown> | null;
+    const withoutTimestamp = (o: unknown): string => {
+      if (!o || typeof o !== 'object') return JSON.stringify(o);
+      const { updatedAt: _drop, ...rest } = o as Record<string, unknown>;
+      return JSON.stringify(rest);
+    };
+    if (existing && withoutTimestamp(existing) === withoutTimestamp(payload)) return;
+
     const p = this.statePath;
     await mkdir(dirname(p), { recursive: true });
-    await writeFile(p, payload, 'utf8');
+    await writeFile(p, JSON.stringify({ ...payload, updatedAt: new Date().toISOString() }, null, 2), 'utf8');
   }
+}
+
+/** Write `content` only when the file is missing or holds something else. */
+async function writeIfChanged(file: string, content: string): Promise<boolean> {
+  try {
+    if ((await readFile(file, 'utf8')) === content) return false;
+  } catch {
+    // Missing or unreadable: fall through and write it.
+  }
+  await writeFile(file, content, 'utf8');
+  return true;
 }

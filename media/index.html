@@ -53,6 +53,10 @@
           />
           <button id="btn-lib-close" type="button" class="we-btn we-btn--compact">返回设置</button>
         </div>
+        <!-- Category chips. Built by main.mjs from the inventory (types, WE tags, sources,
+             ratings) so the set of chips always matches what the library actually holds;
+             counts are recomputed with the other filters applied. -->
+        <div id="lib-filters" class="we-filters" role="group" aria-label="筛选壁纸"></div>
         <ul id="lib-list" class="we-lib-list"></ul>
         <p id="lib-empty" class="we-lib-empty">正在扫描本地壁纸库…</p>
       </section>
@@ -64,49 +68,149 @@
       </div>
 
       <div class="we-controls">
-        <label class="we-field">
-          <span>玻璃模糊 <output id="out-blur"></output></span>
-          <input id="in-blur" type="range" min="0" max="60" step="1" />
-        </label>
-        <label class="we-field">
-          <span>玻璃底色不透明度 <output id="out-glassAlpha"></output></span>
-          <input id="in-glassAlpha" type="range" min="0" max="1" step="0.01" />
-        </label>
-        <label class="we-field">
-          <span>暗化层 <output id="out-scrim"></output></span>
-          <input id="in-scrim" type="range" min="0" max="1" step="0.01" />
-        </label>
-        <label class="we-field">
-          <span>侧边栏磨砂 <output id="out-chromeGlassAlpha"></output></span>
-          <input id="in-chromeGlassAlpha" type="range" min="0" max="1" step="0.01" />
-        </label>
-        <label class="we-field">
-          <span>代码区底衬 <output id="out-editorGlassAlpha"></output></span>
-          <input id="in-editorGlassAlpha" type="range" min="0" max="1" step="0.01" />
-        </label>
-        <label class="we-field">
-          <span>壁纸不透明度 <output id="out-wallpaperOpacity"></output></span>
-          <input id="in-wallpaperOpacity" type="range" min="0.05" max="1" step="0.01" />
-        </label>
-        <label class="we-field">
-          <span>边框 <output id="out-border"></output></span>
-          <input id="in-border" type="range" min="0" max="8" step="1" />
-        </label>
-        <label class="we-field">
-          <span>面板宽度 <output id="out-panelWidth"></output></span>
-          <input id="in-panelWidth" type="range" min="240" max="900" step="10" />
-        </label>
-        <label class="we-field we-field--color">
-          <span>玻璃颜色</span>
-          <input id="in-glassColor" type="color" />
-        </label>
-        <label class="we-field">
-          <span>背景饱和度 <output id="out-saturate"></output></span>
-          <input id="in-saturate" type="range" min="0" max="3" step="0.1" />
-        </label>
+        <!-- Settings are grouped by WHAT they affect, not dumped in one column: three of
+             these keys only do anything with the whole-window patch on, and mixing them
+             with the wallpaper sliders made every control look equally global. -->
+        <div class="we-controls-head">
+          <span class="we-controls-title">设置</span>
+          <button id="btn-reset-all" type="button" class="we-linkbtn" title="把所有设置恢复为默认值">全部恢复默认</button>
+        </div>
+
+        <section class="we-group" aria-labelledby="grp-wallpaper">
+          <h2 id="grp-wallpaper" class="we-group-title">壁纸</h2>
+          <div class="we-group-body">
+            <div class="we-field">
+              <div class="we-field-head">
+                <label for="in-wallpaperOpacity">壁纸不透明度</label>
+                <span class="we-value">
+                  <output id="out-wallpaperOpacity" for="in-wallpaperOpacity"></output>
+                  <button type="button" class="we-reset" data-reset="wallpaperOpacity" aria-label="恢复壁纸不透明度的默认值">↺</button>
+                </span>
+              </div>
+              <input id="in-wallpaperOpacity" type="range" min="0.05" max="1" step="0.01" />
+            </div>
+
+            <div class="we-field">
+              <div class="we-field-head">
+                <label for="in-scrim">暗化层</label>
+                <span class="we-value">
+                  <output id="out-scrim" for="in-scrim"></output>
+                  <button type="button" class="we-reset" data-reset="scrim" aria-label="恢复暗化层的默认值">↺</button>
+                </span>
+              </div>
+              <input id="in-scrim" type="range" min="0" max="1" step="0.01" />
+            </div>
+
+            <div class="we-field">
+              <div class="we-field-head">
+                <label for="in-saturate">背景饱和度</label>
+                <span class="we-value">
+                  <output id="out-saturate" for="in-saturate"></output>
+                  <button type="button" class="we-reset" data-reset="saturate" aria-label="恢复背景饱和度的默认值">↺</button>
+                </span>
+              </div>
+              <input id="in-saturate" type="range" min="0" max="3" step="0.1" />
+            </div>
+          </div>
+        </section>
+
+        <section class="we-group" aria-labelledby="grp-glass">
+          <h2 id="grp-glass" class="we-group-title">玻璃</h2>
+          <div class="we-group-body">
+            <div class="we-field">
+              <div class="we-field-head">
+                <label for="in-blur">玻璃模糊</label>
+                <span class="we-value">
+                  <output id="out-blur" for="in-blur"></output>
+                  <button type="button" class="we-reset" data-reset="blur" aria-label="恢复玻璃模糊的默认值">↺</button>
+                </span>
+              </div>
+              <input id="in-blur" type="range" min="0" max="60" step="1" />
+            </div>
+
+            <div class="we-field">
+              <div class="we-field-head">
+                <label for="in-glassAlpha">玻璃底色不透明度</label>
+                <span class="we-value">
+                  <output id="out-glassAlpha" for="in-glassAlpha"></output>
+                  <button type="button" class="we-reset" data-reset="glassAlpha" aria-label="恢复玻璃底色不透明度的默认值">↺</button>
+                </span>
+              </div>
+              <input id="in-glassAlpha" type="range" min="0" max="1" step="0.01" />
+            </div>
+
+            <div class="we-field we-field--color">
+              <div class="we-field-head">
+                <label for="in-glassColor">玻璃颜色</label>
+                <span class="we-value">
+                  <output id="out-glassColor" for="in-glassColor"></output>
+                  <button type="button" class="we-reset" data-reset="glassColor" aria-label="恢复玻璃颜色的默认值">↺</button>
+                </span>
+              </div>
+              <input id="in-glassColor" type="color" />
+            </div>
+
+            <div class="we-field">
+              <div class="we-field-head">
+                <label for="in-border">边框</label>
+                <span class="we-value">
+                  <output id="out-border" for="in-border"></output>
+                  <button type="button" class="we-reset" data-reset="border" aria-label="恢复边框宽度的默认值">↺</button>
+                </span>
+              </div>
+              <input id="in-border" type="range" min="0" max="8" step="1" />
+            </div>
+          </div>
+        </section>
+
+        <section class="we-group" aria-labelledby="grp-workbench">
+          <h2 id="grp-workbench" class="we-group-title">
+            VS Code 界面 <span class="we-group-hint">铺满整窗时生效</span>
+          </h2>
+          <div class="we-group-body">
+            <div class="we-field">
+              <div class="we-field-head">
+                <label for="in-chromeGlassAlpha">侧边栏磨砂</label>
+                <span class="we-value">
+                  <output id="out-chromeGlassAlpha" for="in-chromeGlassAlpha"></output>
+                  <button type="button" class="we-reset" data-reset="chromeGlassAlpha" aria-label="恢复侧边栏磨砂的默认值">↺</button>
+                </span>
+              </div>
+              <input id="in-chromeGlassAlpha" type="range" min="0" max="1" step="0.01" />
+            </div>
+
+            <div class="we-field">
+              <div class="we-field-head">
+                <label for="in-editorGlassAlpha">代码区底衬</label>
+                <span class="we-value">
+                  <output id="out-editorGlassAlpha" for="in-editorGlassAlpha"></output>
+                  <button type="button" class="we-reset" data-reset="editorGlassAlpha" aria-label="恢复代码区底衬的默认值">↺</button>
+                </span>
+              </div>
+              <input id="in-editorGlassAlpha" type="range" min="0" max="1" step="0.01" />
+            </div>
+          </div>
+        </section>
+
+        <section class="we-group" aria-labelledby="grp-panel">
+          <h2 id="grp-panel" class="we-group-title">面板</h2>
+          <div class="we-group-body">
+            <div class="we-field">
+              <div class="we-field-head">
+                <label for="in-panelWidth">面板宽度</label>
+                <span class="we-value">
+                  <output id="out-panelWidth" for="in-panelWidth"></output>
+                  <button type="button" class="we-reset" data-reset="panelWidth" aria-label="恢复面板宽度的默认值">↺</button>
+                </span>
+              </div>
+              <input id="in-panelWidth" type="range" min="240" max="900" step="10" />
+            </div>
+          </div>
+        </section>
+
         <div class="we-apply">
           <button id="btn-apply" type="button" class="we-btn we-btn--compact">立即生效</button>
-          <span id="apply-hint" class="we-hint" hidden></span>
+          <span id="apply-hint" class="we-hint" role="status" aria-live="polite" hidden></span>
         </div>
       </div>
 

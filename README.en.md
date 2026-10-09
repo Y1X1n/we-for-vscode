@@ -68,7 +68,7 @@ Unlike the "swap in a static background image" extensions, this one **actually r
 # installation, and installing while VS Code runs leaves the webview with a
 # "Could not register service worker" error.
 & "$env:LOCALAPPDATA\Programs\Microsoft VS Code\bin\code.cmd" `
-  --install-extension .\we-for-vscode-0.1.12.vsix --force
+  --install-extension .\we-for-vscode-0.1.16.vsix --force   # match the filename in the release
 ```
 
 Start VS Code afterwards: the extension activates on startup, and `Ctrl+Alt+W` opens the wallpaper view.
@@ -80,7 +80,7 @@ git clone https://github.com/Y1X1n/we-for-vscode.git
 cd we-for-vscode
 npm install
 npm run verify                        # tsc + node --test
-npx vsce package --no-dependencies    # produces we-for-vscode-0.1.12.vsix
+npx vsce package --no-dependencies    # produces we-for-vscode-<version>.vsix (version from package.json)
 ```
 
 ### Turning on "fill the whole window"
@@ -89,7 +89,7 @@ It is off by default because it patches `workbench.html` inside the VS Code inst
 
 1. Open the wallpaper view (`Ctrl+Alt+W`) and pick a wallpaper;
 2. Run **Wallpaper Engine: 启用壁纸背景（铺满 VS Code，实验/需改安装目录）** from the command palette, or flip `weWallpaper.workbenchBackground`;
-3. Reload the window when asked (each other open window needs its own `Ctrl+R`; newly opened windows pick it up automatically).
+3. Follow the prompt: the **first** patch (or the first one after a VS Code update wiped it) needs a **full quit and relaunch** — the installation checksum table is read once, at startup, so a window reload cannot clear the "installation appears to be corrupt" notice. When only the injected assets changed, reloading the window is enough (each other open window needs its own `Ctrl+R`; newly opened windows pick it up automatically).
 
 To undo: run **禁用壁纸背景（还原安装目录）** — the installation goes back to how it was.
 
@@ -98,7 +98,7 @@ To undo: run **禁用壁纸背景（还原安装目录）** — the installation
 | Command | What it does |
 |---|---|
 | `Wallpaper Engine: 打开壁纸视图` (`Ctrl+Alt+W`) | Opens the panel |
-| `Wallpaper Engine: 选择壁纸…` | Opens the panel with its wallpaper library expanded |
+| `Wallpaper Engine: 选择壁纸…` | Opens the panel with its wallpaper library expanded (selection stays in the panel; filter by type / tag / source / rating, or search by name) |
 | `Wallpaper Engine: 下一张壁纸` | Next playable wallpaper |
 | `Wallpaper Engine: 重新扫描壁纸库` | Forced rescan (also drops the Steam location cache) |
 | `Wallpaper Engine: 启用/禁用壁纸背景` | Whole-window layer on/off (patches or restores the installation) |
